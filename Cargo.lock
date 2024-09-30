@@ -933,6 +933,7 @@ dependencies = [
 [[package]]
 name = "sp1-lib"
 version = "2.0.0"
+source = "git+https://github.com/succinctlabs/sp1.git?branch=uma-dayal/rsa#cfafbac7b6a31a5d7f24aa4651d2f72a43f4bfd2"
 dependencies = [
  "anyhow",
  "bincode",
