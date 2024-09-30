@@ -120,7 +120,7 @@ version = "0.4.0-rc.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d7992d59cd95a984bde8833d4d025886eec3718777971ad15c58df0b070254a"
 dependencies = [
- "hybrid-array",
+ "hybrid-array 0.2.0-rc.9",
 ]
 
 [[package]]
@@ -228,7 +228,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c070b79a496dccd931229780ad5bbedd535ceff6c3565605a8e440e18e1aa2b"
 dependencies = [
  "getrandom",
- "hybrid-array",
+ "hybrid-array 0.2.0-rc.9",
  "rand_core",
 ]
 
@@ -374,6 +374,15 @@ dependencies = [
 
 [[package]]
 name = "hybrid-array"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "afda7293a2c24c0c81bc1342ffc8522c41ea053f6da3d55200852123f8e1b348"
+dependencies = [
+ "typenum",
+]
+
+[[package]]
+name = "hybrid-array"
 version = "0.2.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d306b679262030ad8813a82d4915fc04efff97776e4db7f8eb5137039d56400"
@@ -409,7 +418,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbc33218cf9ce7b927426ee4ad3501bcc5d8c26bf5fb4a82849a083715aca427"
 dependencies = [
  "block-padding",
- "hybrid-array",
+ "hybrid-array 0.2.0-rc.9",
 ]
 
 [[package]]
@@ -716,6 +725,7 @@ dependencies = [
  "crypto-bigint",
  "digest 0.11.0-pre.9",
  "hex-literal",
+ "hybrid-array 0.1.0",
  "num-bigint-dig",
  "num-integer",
  "num-traits",
