@@ -28,10 +28,9 @@ zeroize = { version = "1.5", features = ["alloc"] }
 sp1-derive = "1.1.0"
 crypto-bigint = "0.5.5"
 sp1-lib = { git = "https://github.com/succinctlabs/sp1.git", branch = "uma-dayal/rsa" }
-
 cfg-if = "1.0.0"
 bytemuck = { version = "1.16.1", features = ["derive"] }
-# hybrid-array = "0.1.0"
+
 
 # optional dependencies
 sha1 = { version = "=0.11.0-pre.4", optional = true, default-features = false, features = ["oid"] }
