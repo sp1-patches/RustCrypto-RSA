@@ -39,16 +39,12 @@ fn custom_modpow_u2048(base: &U2048, exp: &U2048, modulus: &U2048) -> BigUint {
         return BigUint::zero();
     }
 
-    // assert (modulus - 1) * (modulus - 1) does not overflow base
-
-    println!("cycle-tracker-start: init");
     let mut result = U2048::ONE;
     let modulus_nonzero = NonZero::new(*modulus).unwrap(); // Convert modulus to NonZero
     let mut base = base.rem(&modulus_nonzero);
-    println!("cycle-tracker-end: init");
+
 
     let mut exp = *exp;
-    println!("cycle-tracker-start: loop");
     while exp > U2048::ZERO {
         if exp.is_odd().into() {
             result = mul_mod_u2048(&result, &base, &modulus_nonzero);
@@ -56,10 +52,8 @@ fn custom_modpow_u2048(base: &U2048, exp: &U2048, modulus: &U2048) -> BigUint {
         exp = exp.shr(1);
         base = mul_mod_u2048(&base, &base, &modulus_nonzero);
     }
-    println!("cycle-tracker-end: loop");
-    println!("cycle-tracker-start: result_biguint");
+
     let result_biguint = BigUint::from_bytes_le(&result.to_le_bytes());
-    println!("cycle-tracker-end: result_biguint");
     result_biguint
     
 }
@@ -97,7 +91,6 @@ fn mul_u2048(a_array: U2048, b_array: U2048) -> U4096 {
     let mut sum = U4096::ZERO;
     let a_words = a_array.to_words();
 
-
     for i in 0..8 {
         let chunk = a_words[i*8..(i+1)*8].try_into().unwrap();
         let a_chunk: U256 = U256::from_words(chunk);
@@ -109,14 +102,12 @@ fn mul_u2048(a_array: U2048, b_array: U2048) -> U4096 {
     }
 
     sum
-
 }
 
 // #[sp1_derive::cycle_tracker]
 fn mul_array(a: U256, b_array: U2048) -> U4096 {
     //multiply a with b_array
 
-    // println!("cycle-tracker-start: mul_wide");
     let mut result_words = [0u32; 128]; // Combined array for both lo and hi
     let result_ptr = result_words.as_mut_ptr();
     unsafe {
@@ -127,16 +118,11 @@ fn mul_array(a: U256, b_array: U2048) -> U4096 {
             result_ptr.add(64) as *mut [u32; 8],
         );
     }
-    // println!("cycle-tracker-end: mul_wide");
 
     U4096::from_words(result_words) 
 }
 
 fn from_biguint_to_u2048(value: &BigUint) -> U2048 {
-    // let mut padded_bytes = [0u8; 256]; // Create a buffer of 256 bytes, initialized with zeros
-    // let a_bytes = value.to_bytes_le();
-    // padded_bytes[..a_bytes.len()].copy_from_slice(&a_bytes); // Copy the actual bytes, leaving any remaining bytes as zeros
-    // U2048::from_le_slice(&padded_bytes)
     let mut padded_bytes = [0u8; 256];
     let a_bytes = value.to_bytes_le();
     for (i, &byte) in a_bytes.iter().enumerate() {
