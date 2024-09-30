@@ -7,11 +7,11 @@ use num_integer::{sqrt, Integer as NumInteger};
 use num_traits::{FromPrimitive, One, Pow, Signed, Zero};
 use rand_core::CryptoRngCore;
 use zeroize::{Zeroize, Zeroizing};
-use crypto_bigint::{Integer as CryptoInteger, Concat, NonZero, ConcatMixed, Encoding, U2048, U256, U4096};
+use crypto_bigint::{Integer as CryptoInteger, NonZero, Encoding, U2048, U256, U4096};
 use crate::errors::{Error, Result};
 use crate::traits::{PrivateKeyParts, PublicKeyParts};
-use bytemuck::{cast_ref, cast_mut, cast_slice_mut, cast};
-use sp1_lib::io::{hint_slice, read_vec};
+use bytemuck::cast_ref;
+use sp1_lib::io::hint_slice;
 // use sp1_lib::syscall_u256x2048_mul;
 use core::{convert::TryInto};
 
