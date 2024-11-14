@@ -26,9 +26,13 @@ signature = { version = ">2.0, <2.3", default-features = false , features = ["al
 spki = { version = "0.7.3", default-features = false, features = ["alloc"] }
 zeroize = { version = "1.5", features = ["alloc"] }
 crypto-bigint = "0.5.5"
-sp1-lib = { git = "https://github.com/succinctlabs/sp1.git", branch = "dev" }
 cfg-if = "1.0.0"
 bytemuck = { version = "1.16.1", features = ["derive"] }
+
+[target.'cfg(all(target_os = "zkvm", target_vendor = "succinct"))'.dependencies]
+sp1-lib = { git = "https://github.com/succinctlabs/sp1.git", branch = "dev" }
+
+
 
 # optional dependencies
 sha1 = { version = "0.10.5", optional = true, default-features = false, features = ["oid"] }
