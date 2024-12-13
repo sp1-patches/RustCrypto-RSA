@@ -76,19 +76,19 @@ cfg_if::cfg_if! {
                 let result_bytes = result.to_le_bytes();
                 let quotient_bytes = quotient.to_le_bytes();
                 
-                hint_slice(&result_bytes);
+                hint_slice(&result_bytes[..256]);
                 hint_slice(&quotient_bytes[..256]);
             }
 
-            let result_bytes: [u8; 512] = sp1_lib::io::read_vec().try_into().unwrap();
+            let result_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
             let quotient_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
 
             let q_array = U2048::from_le_slice(&quotient_bytes);
-            let result_u4096 = U4096::from_le_slice(&result_bytes);
-            let result_u2048 = U2048::from_le_slice(&result_bytes[..256]);
+            let result = U2048::from_le_slice(&result_bytes);
 
-            assert!(prod.wrapping_sub(&mul_u2048(q_array, *modulus)).wrapping_sub(&result_u4096) == U4096::ZERO);
-            result_u2048
+            assert!(result > U2048::ZERO && result <= *modulus);
+            assert!(prod == mul_u2048(q_array, *modulus) + U4096::from(&result));
+            result
         }
 
 
