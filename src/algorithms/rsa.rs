@@ -87,7 +87,7 @@ cfg_if::cfg_if! {
             let result = U2048::from_le_slice(&result_bytes);
 
             assert!(result > U2048::ZERO && result <= *modulus);
-            assert!(prod == mul_u2048(q_array, *modulus) + U4096::from(&result));
+            assert!(prod == mul_u2048(q_array, *modulus).wrapping_add(&U4096::from(&result)));
             result
         }
 
