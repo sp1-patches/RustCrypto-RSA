@@ -42,13 +42,19 @@ pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
     Ok(m.modpow(key.e(), key.n()))
 }
 
+/// # ☢️️ WARNING: HAZARDOUS API ☢️
+///
+/// All inputs are ASSUMED to be on the range of [0, 2^2048).]
+///
+/// Attempting to use this function with values outside of this range will result in truncation,
+/// and may have unintended side effects!
 #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
 mod zkvm {
     use super::*;
 
     /// Performs modular exponentiation of `base` to the power of `exp` modulo `modulus`.
     /// This function takes in U2048 operands and returns the result as a BigUint.
-    pub(crate) fn custom_modpow_u2048(base: &U2048, exp: &U2048, modulus: &U2048) -> BigUint {
+    fn custom_modpow_u2048(base: &U2048, exp: &U2048, modulus: &U2048) -> BigUint {
         if *modulus == U2048::ONE {
             return BigUint::zero();
         }
@@ -68,29 +74,28 @@ mod zkvm {
 
         let result_biguint = BigUint::from_bytes_le(&result.to_le_bytes());
         result_biguint
-        
     }
 
 
     /// Performs modular multiplication of `a` and `b` with `modulus`.
     /// It calculates the quotient and remainder in unconstrained.
+    ///
+    /// Note: This function assumes that 0 <= a, b < modulus.
     fn mul_mod_u2048(a: &U2048, b: &U2048, modulus: &U2048) -> U2048 {
         let prod = mul_u2048(*a, *b);
         
         // Call the hook to perform the modmul opertaion in the executor.
         sp1_lib::io::write(sp1_lib::io::FD_RSA_MUL_MOD, &prod.to_le_bytes().into_iter().chain(modulus.to_le_bytes().into_iter()).collect::<Vec<_>>()); 
 
-        let result_bytes: [u8; 512] = sp1_lib::io::read_vec().try_into().unwrap();
+        let result_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
         let quotient_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
 
         let q_array = U2048::from_le_slice(&quotient_bytes);
-        let result_u4096 = U4096::from_le_slice(&result_bytes);
-        let result_u2048 = U2048::from_le_slice(&result_bytes[..256]);
-        
-        // Constrain that a * b % modulus = result
-        assert!(prod.wrapping_sub(&mul_u2048(q_array, *modulus)).wrapping_sub(&result_u4096) == U4096::ZERO);
+        let result = U2048::from_le_slice(&result_bytes);
 
-        result_u2048
+        assert!(result >= U2048::ZERO && result < *modulus);
+        assert!(prod == mul_u2048(q_array, *modulus).wrapping_add(&U4096::from(&result)));
+        result 
     }
 
     /// Performs multiplication of `a` and `b`, which are both U2048,
