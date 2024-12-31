@@ -29,13 +29,13 @@ crypto-bigint = "0.5.5"
 cfg-if = "1.0.0"
 bytemuck = { version = "1.16.1", features = ["derive"] }
 
-[target.'cfg(all(target_os = "zkvm", target_vendor = "succinct"))'.dependencies]
-sp1-lib = { git = "https://github.com/succinctlabs/sp1.git", branch = "n/rsa-hook" }
-
 # optional dependencies
 sha1 = { version = "0.10.5", optional = true, default-features = false, features = ["oid"] }
 sha2 = { version = "0.10.6", optional = true, default-features = false, features = ["oid"] }
 serde = { version = "1.0.184", optional = true, default-features = false, features = ["derive"] }
+
+[target.'cfg(all(target_os = "zkvm", target_vendor = "succinct"))'.dependencies]
+sp1-lib = "4.0.0-rc.3"
 
 [dev-dependencies]
 base64ct = { version = "1", features = ["alloc"] }
