@@ -11,11 +11,11 @@ use zeroize::{Zeroize, Zeroizing};
 #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
 use bytemuck::cast_ref;
 #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
-use sp1_lib::io::hint_slice;
-#[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
-use crypto_bigint::{Integer as CryptoInteger, NonZero, Encoding, U2048, U256, U4096};
-#[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
 use core::convert::TryInto;
+#[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
+use crypto_bigint::{Encoding, Integer as CryptoInteger, NonZero, U2048, U256, U4096};
+#[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
+use sp1_lib::io::hint_slice;
 
 use crate::errors::{Error, Result};
 use crate::traits::{PrivateKeyParts, PublicKeyParts};
@@ -54,7 +54,7 @@ mod zkvm {
 
     /// Performs modular exponentiation of `base` to the power of `exp` modulo `modulus`.
     /// This function takes in U2048 operands and returns the result as a BigUint.
-    fn custom_modpow_u2048(base: &U2048, exp: &U2048, modulus: &U2048) -> BigUint {
+    pub(super) fn custom_modpow_u2048(base: &U2048, exp: &U2048, modulus: &U2048) -> BigUint {
         if *modulus == U2048::ONE {
             return BigUint::zero();
         }
@@ -76,16 +76,22 @@ mod zkvm {
         result_biguint
     }
 
-
     /// Performs modular multiplication of `a` and `b` with `modulus`.
     /// It calculates the quotient and remainder in unconstrained.
     ///
     /// Note: This function assumes that 0 <= a, b < modulus.
     fn mul_mod_u2048(a: &U2048, b: &U2048, modulus: &U2048) -> U2048 {
         let prod = mul_u2048(*a, *b);
-        
+
         // Call the hook to perform the modmul opertaion in the executor.
-        sp1_lib::io::write(sp1_lib::io::FD_RSA_MUL_MOD, &prod.to_le_bytes().into_iter().chain(modulus.to_le_bytes().into_iter()).collect::<Vec<_>>()); 
+        sp1_lib::io::write(
+            sp1_lib::io::FD_RSA_MUL_MOD,
+            &prod
+                .to_le_bytes()
+                .into_iter()
+                .chain(modulus.to_le_bytes().into_iter())
+                .collect::<Vec<_>>(),
+        );
 
         let result_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
         let quotient_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
@@ -95,7 +101,7 @@ mod zkvm {
 
         assert!(result >= U2048::ZERO && result < *modulus);
         assert!(prod == mul_u2048(q_array, *modulus).wrapping_add(&U4096::from(&result)));
-        result 
+        result
     }
 
     /// Performs multiplication of `a` and `b`, which are both U2048,
@@ -105,11 +111,11 @@ mod zkvm {
         let a_words = a_array.to_words();
 
         for i in 0..8 {
-            let chunk = a_words[i*8..(i+1)*8].try_into().unwrap();
+            let chunk = a_words[i * 8..(i + 1) * 8].try_into().unwrap();
             let a_chunk: U256 = U256::from_words(chunk);
             let mut prod = mul_array(a_chunk, b_array);
             let mut shifted_words = [0u32; 128];
-            shifted_words[i*8..].copy_from_slice(&prod.to_words()[..(128 - 8*i)]);
+            shifted_words[i * 8..].copy_from_slice(&prod.to_words()[..(128 - 8 * i)]);
             let shifted_prod = U4096::from_words(shifted_words);
             sum = sum.wrapping_add(&shifted_prod);
         }
@@ -130,7 +136,7 @@ mod zkvm {
             );
         }
 
-        U4096::from_words(result_words) 
+        U4096::from_words(result_words)
     }
 
     /// Converts a BigUint to a U2048.
@@ -138,14 +144,15 @@ mod zkvm {
         let mut padded_bytes = [0u8; 256];
         let a_bytes = value.to_bytes_le();
         for (i, &byte) in a_bytes.iter().enumerate() {
-            if i >= 256 { break; }
+            if i >= 256 {
+                break;
+            }
             padded_bytes[i] = byte;
         }
-        
+
         U2048::from_le_slice(&padded_bytes)
     }
 }
-
 
 /// ⚠️ Performs raw RSA decryption with no padding or error checking.
 ///
