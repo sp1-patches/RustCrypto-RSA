@@ -35,7 +35,7 @@ sha2 = { version = "0.10.6", optional = true, default-features = false, features
 serde = { version = "1.0.184", optional = true, default-features = false, features = ["derive"] }
 
 [target.'cfg(all(target_os = "zkvm", target_vendor = "succinct"))'.dependencies]
-sp1-lib = "4.0.0-rc.3"
+sp1-lib = "4.0.0"
 
 [dev-dependencies]
 base64ct = { version = "1", features = ["alloc"] }
