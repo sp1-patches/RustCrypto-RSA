@@ -36,9 +36,10 @@ pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
         let e_u2048 = from_biguint_to_u2048(key.e());
         let n_u2048 = from_biguint_to_u2048(key.n());
 
-        return Ok(custom_modpow_u2048(&m_u2048, &e_u2048, &n_u2048));
-    }
+        let result = custom_modpow_u2048(&m_u2048, &e_u2048, &n_u2048);
 
+        return Ok(result);
+    }
     Ok(m.modpow(key.e(), key.n()))
 }
 
@@ -59,18 +60,35 @@ mod zkvm {
             return BigUint::zero();
         }
 
-        let mut result = U2048::ONE;
-        let modulus_nonzero = NonZero::new(*modulus).unwrap(); // Convert modulus to NonZero
-        let mut base = base.rem(&modulus_nonzero);
+        // The most common exponent is 65537, so we optimize for that case, otherwise we use the
+        // generic square and multiply algorithm.
+        let result = if (exp == &U2048::from_u64(65537u64)) {
+            let modulus_nonzero = NonZero::new(*modulus).unwrap(); // Convert modulus to NonZero
+            let mut base = base.rem(&modulus_nonzero);
+            let mut result = base;
 
-        let mut exp = *exp;
-        while exp > U2048::ZERO {
-            if exp.is_odd().into() {
-                result = mul_mod_u2048(&result, &base, &modulus_nonzero);
+            // Square 16 times
+            for i in 0..16 {
+                result = mul_mod_u2048(&result, &result, &modulus_nonzero);
             }
-            exp = exp.shr(1);
-            base = mul_mod_u2048(&base, &base, &modulus_nonzero);
-        }
+            // Multiply by the base
+            mul_mod_u2048(&result, &base, &modulus_nonzero)
+        } else {
+            let mut result = U2048::ONE;
+            let modulus_nonzero = NonZero::new(*modulus).unwrap(); // Convert modulus to NonZero
+            let mut base = base.rem(&modulus_nonzero);
+
+            let mut exp = *exp;
+            while exp > U2048::ZERO {
+                if exp.is_odd().into() {
+                    result = mul_mod_u2048(&result, &base, &modulus_nonzero);
+                }
+                exp = exp.shr(1);
+                base = mul_mod_u2048(&base, &base, &modulus_nonzero);
+            }
+
+            result
+        };
 
         let result_biguint = BigUint::from_bytes_le(&result.to_le_bytes());
         result_biguint
@@ -108,14 +126,18 @@ mod zkvm {
     /// and returns a U4096.
     fn mul_u2048(a_array: U2048, b_array: U2048) -> U4096 {
         let mut sum = U4096::ZERO;
-        let a_words = a_array.to_words();
 
-        for i in 0..8 {
-            let chunk = a_words[i * 8..(i + 1) * 8].try_into().unwrap();
-            let a_chunk: U256 = U256::from_words(chunk);
-            let mut prod = mul_array(a_chunk, b_array);
+        for (i, chunk) in a_array.as_words().chunks(8).enumerate() {
             let mut shifted_words = [0u32; 128];
-            shifted_words[i * 8..].copy_from_slice(&prod.to_words()[..(128 - 8 * i)]);
+            let prod_result_ptr = shifted_words[i * 8..].as_mut_ptr();
+            unsafe {
+                sp1_lib::syscall_u256x2048_mul(
+                    chunk.as_ptr() as *const [u32; 8],
+                    b_array.as_words().as_ptr() as *const [u32; 64],
+                    prod_result_ptr as *mut [u32; 64],
+                    prod_result_ptr.add(64) as *mut [u32; 8],
+                );
+            }
             let shifted_prod = U4096::from_words(shifted_words);
             sum = sum.wrapping_add(&shifted_prod);
         }
@@ -149,7 +171,6 @@ mod zkvm {
             }
             padded_bytes[i] = byte;
         }
-
         U2048::from_le_slice(&padded_bytes)
     }
 }

@@ -13,16 +13,32 @@ readme = "README.md"
 rust-version = "1.65"
 
 [dependencies]
-num-bigint = { version = "0.8.2", features = ["i128", "prime", "zeroize"], default-features = false, package = "num-bigint-dig" }
-num-traits = { version= "0.2.9", default-features = false, features = ["libm"] }
+num-bigint = { version = "0.8.2", features = [
+    "i128",
+    "prime",
+    "zeroize",
+], default-features = false, package = "num-bigint-dig" }
+num-traits = { version = "0.2.9", default-features = false, features = [
+    "libm",
+] }
 num-integer = { version = "0.1.39", default-features = false }
 rand_core = { version = "0.6.4", default-features = false }
 const-oid = { version = "0.9", default-features = false }
 subtle = { version = "2.1.1", default-features = false }
-digest = { version = "0.10.5", default-features = false, features = ["alloc", "oid"] }
-pkcs1 = { version = "0.7.5", default-features = false, features = ["alloc", "pkcs8"] }
+digest = { version = "0.10.5", default-features = false, features = [
+    "alloc",
+    "oid",
+] }
+pkcs1 = { version = "0.7.5", default-features = false, features = [
+    "alloc",
+    "pkcs8",
+] }
 pkcs8 = { version = "0.10.2", default-features = false, features = ["alloc"] }
-signature = { version = ">2.0, <2.3", default-features = false , features = ["alloc", "digest", "rand_core"] }
+signature = { version = ">2.0, <2.3", default-features = false, features = [
+    "alloc",
+    "digest",
+    "rand_core",
+] }
 spki = { version = "0.7.3", default-features = false, features = ["alloc"] }
 zeroize = { version = "1.5", features = ["alloc"] }
 crypto-bigint = "0.5.5"
@@ -30,9 +46,15 @@ cfg-if = "1.0.0"
 bytemuck = { version = "1.16.1", features = ["derive"] }
 
 # optional dependencies
-sha1 = { version = "0.10.5", optional = true, default-features = false, features = ["oid"] }
-sha2 = { version = "0.10.6", optional = true, default-features = false, features = ["oid"] }
-serde = { version = "1.0.184", optional = true, default-features = false, features = ["derive"] }
+sha1 = { version = "0.10.5", optional = true, default-features = false, features = [
+    "oid",
+] }
+sha2 = { version = "0.10.6", optional = true, default-features = false, features = [
+    "oid",
+] }
+serde = { version = "1.0.184", optional = true, default-features = false, features = [
+    "derive",
+] }
 
 [target.'cfg(all(target_os = "zkvm", target_vendor = "succinct"))'.dependencies]
 sp1-lib = "4.0.0"
