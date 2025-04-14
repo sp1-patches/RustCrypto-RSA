@@ -30,7 +30,7 @@ use crate::traits::{PrivateKeyParts, PublicKeyParts};
 pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
     #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
     {
-        if key.size() == 2048 {
+        if key.size() == 256 {
             use zkvm::*;
 
             let m_u2048 = from_biguint_to_u2048(m);
