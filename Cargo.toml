@@ -57,7 +57,7 @@ serde = { version = "1.0.184", optional = true, default-features = false, featur
 ] }
 
 [target.'cfg(all(target_os = "zkvm", target_vendor = "succinct"))'.dependencies]
-sp1-lib = "5.0.0"
+sp1-lib = { path = "../../sp1-wip/crates/zkvm/lib" }
 
 [dev-dependencies]
 base64ct = { version = "1", features = ["alloc"] }
