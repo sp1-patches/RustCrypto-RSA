@@ -39,6 +39,22 @@ pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
                 let result = zkvm::custom_modpow_2048(&m_chunks, &e_chunks, &n_chunks);
                 return Ok(result);
             },
+            384 => {
+                use zkvm::*;
+                let m_chunks = zkvm::from_biguint_to_chunks::<12>(m);
+                let e_chunks = zkvm::from_biguint_to_chunks::<12>(key.e()); 
+                let n_chunks = zkvm::from_biguint_to_chunks::<12>(key.n());
+                let result = zkvm::custom_modpow_3072(&m_chunks, &e_chunks, &n_chunks);
+                return Ok(result);
+            },
+            512 => {
+                use zkvm::*;
+                let m_chunks = zkvm::from_biguint_to_chunks::<16>(m);
+                let e_chunks = zkvm::from_biguint_to_chunks::<16>(key.e()); 
+                let n_chunks = zkvm::from_biguint_to_chunks::<16>(key.n());
+                let result = zkvm::custom_modpow_4096(&m_chunks, &e_chunks, &n_chunks);
+                return Ok(result);
+            },
             _ => {
                 // Fall through to standard modpow for unsupported sizes
             }
@@ -106,6 +122,105 @@ mod zkvm {
         result_chunks
     }
 
+    /// Modular multiplication for 3072-bit keys
+    fn mul_mod_3072(a_chunks: &[[u32; 8]; 12], b_chunks: &[[u32; 8]; 12], modulus_chunks: &[[u32; 8]; 12]) -> [[u32; 8]; 12] {
+        let prod_chunks = mul_generic_chunks::<12, 24>(a_chunks, b_chunks);
+       
+        // Convert to bytes for SP1 I/O using direct transmute
+        let prod_bytes: [u8; 768] = unsafe {
+            std::mem::transmute::<[[u32; 8]; 24], [u8; 768]>(prod_chunks)
+        };
+        let modulus_bytes: [u8; 384] = unsafe {
+            std::mem::transmute::<[[u32; 8]; 12], [u8; 384]>(*modulus_chunks)
+        };
+        
+        // Call the hook to perform the modmul operation in the executor
+        sp1_lib::io::write(
+            sp1_lib::io::FD_RSA_MUL_MOD,
+            &prod_bytes.into_iter().chain(modulus_bytes.into_iter()).collect::<Vec<_>>(),
+        );
+
+        let result_bytes: [u8; 384] = sp1_lib::io::read_vec().try_into().unwrap();
+        let quotient_bytes: [u8; 384] = sp1_lib::io::read_vec().try_into().unwrap();
+
+        // Convert back to chunks
+        let result_chunks: [[u32; 8]; 12] = unsafe {
+            std::mem::transmute::<[u8; 384], [[u32; 8]; 12]>(result_bytes)
+        };
+        let quotient_chunks: [[u32; 8]; 12] = unsafe {
+            std::mem::transmute::<[u8; 384], [[u32; 8]; 12]>(quotient_bytes)
+        };
+        
+        // Verify: prod == quotient * modulus + result
+        let quotient_mul_chunks = mul_generic_chunks::<12, 24>(&quotient_chunks, modulus_chunks);
+        
+        let mut verification_prod = quotient_mul_chunks;
+
+        add_generic_chunks(&mut verification_prod, &result_chunks);
+        
+        // Check prod == verification_prod  
+        for i in 0..24 {
+            for j in 0..8 {
+                assert_eq!(prod_chunks[i][j], verification_prod[i][j]);
+            }
+        }
+
+        // Check result < modulus
+        assert_less_than::<12>(&result_chunks, modulus_chunks);
+        
+        result_chunks
+    }
+
+    /// Modular multiplication for 4096-bit keys
+    fn mul_mod_4096(a_chunks: &[[u32; 8]; 16], b_chunks: &[[u32; 8]; 16], modulus_chunks: &[[u32; 8]; 16]) -> [[u32; 8]; 16] {
+        let prod_chunks = mul_generic_chunks::<16, 32>(a_chunks, b_chunks);
+       
+        // Convert to bytes for SP1 I/O using direct transmute
+        let prod_bytes: [u8; 1024] = unsafe {
+            std::mem::transmute::<[[u32; 8]; 32], [u8; 1024]>(prod_chunks)
+        };
+        let modulus_bytes: [u8; 512] = unsafe {
+            std::mem::transmute::<[[u32; 8]; 16], [u8; 512]>(*modulus_chunks)
+        };
+        
+        // Call the hook to perform the modmul operation in the executor
+        sp1_lib::io::write(
+            sp1_lib::io::FD_RSA_MUL_MOD,
+            &prod_bytes.into_iter().chain(modulus_bytes.into_iter()).collect::<Vec<_>>(),
+        );
+
+        let result_bytes: [u8; 512] = sp1_lib::io::read_vec().try_into().unwrap();
+        let quotient_bytes: [u8; 512] = sp1_lib::io::read_vec().try_into().unwrap();
+
+        // Convert back to chunks
+        let result_chunks: [[u32; 8]; 16] = unsafe {
+            std::mem::transmute::<[u8; 512], [[u32; 8]; 16]>(result_bytes)
+        };
+        let quotient_chunks: [[u32; 8]; 16] = unsafe {
+            std::mem::transmute::<[u8; 512], [[u32; 8]; 16]>(quotient_bytes)
+        };
+        
+        // Verify: prod == quotient * modulus + result
+        let quotient_mul_chunks = mul_generic_chunks::<16, 32>(&quotient_chunks, modulus_chunks);
+        
+        let mut verification_prod = quotient_mul_chunks;
+
+        add_generic_chunks(&mut verification_prod, &result_chunks);
+        
+        // Check prod == verification_prod  
+        for i in 0..32 {
+            for j in 0..8 {
+                assert_eq!(prod_chunks[i][j], verification_prod[i][j]);
+            }
+        }
+
+        // Check result < modulus
+        assert_less_than::<16>(&result_chunks, modulus_chunks);
+        
+        result_chunks
+    }
+
+
     /// Modular exponentiation for 2048-bit keys
     pub(super) fn custom_modpow_2048(base_chunks: &[[u32; 8]; 8], exp_chunks: &[[u32; 8]; 8], modulus_chunks: &[[u32; 8]; 8]) -> BigUint {
         // Convert chunks to U2048 for easier manipulation
@@ -148,6 +263,94 @@ mod zkvm {
         let result_u2048 = chunks_to_u2048(&result_chunks);
         
         BigUint::from_bytes_le(&result_u2048.to_le_bytes())
+    }
+
+    /// Modular exponentiation for 3072-bit keys
+    pub(super) fn custom_modpow_3072(base_chunks: &[[u32; 8]; 12], exp_chunks: &[[u32; 8]; 12], modulus_chunks: &[[u32; 8]; 12]) -> BigUint {
+        // Convert chunks to U3072 for easier manipulation
+        let exp_bytes = chunks_to_bytes::<12>(exp_chunks);
+        let exp_u3072 = U3072::from_le_slice(&exp_bytes);
+        
+        assert!(!chunks_is_zero::<12>(modulus_chunks));
+        
+        let result_chunks = if exp_u3072 == U3072::from_u64(65537u64) {
+            // Optimized path for e = 65537
+            // First reduce base mod modulus using mul_mod_3072(base, 1, modulus)
+            let one_chunks = chunks_one();
+            let mut result_chunks = mul_mod_3072(base_chunks, &one_chunks, modulus_chunks);
+            let base_reduced = result_chunks;
+            
+            // Square 16 times
+            for _ in 0..16 {
+                result_chunks = mul_mod_3072(&result_chunks, &result_chunks, modulus_chunks);
+            }
+            
+            mul_mod_3072(&result_chunks, &base_reduced, modulus_chunks)
+        } else {
+            // Square-and-multiply
+            let one_chunks = chunks_one();
+            let mut result_chunks = one_chunks;
+            let mut base_chunks = mul_mod_3072(base_chunks, &one_chunks, modulus_chunks);
+            let mut exp = exp_u3072;
+            
+            while exp > U3072::ZERO {
+                if exp.is_odd().into() {
+                    result_chunks = mul_mod_3072(&result_chunks, &base_chunks, modulus_chunks);
+                }
+                exp = exp.shr(1);
+                base_chunks = mul_mod_3072(&base_chunks, &base_chunks, modulus_chunks);
+            }
+            
+            result_chunks
+        };
+        
+        let result_u3072 = chunks_to_u3072(&result_chunks);
+        
+        BigUint::from_bytes_le(&result_u3072.to_le_bytes())
+    }
+
+     /// Modular exponentiation for 4096-bit keys
+     pub(super) fn custom_modpow_4096(base_chunks: &[[u32; 8]; 16], exp_chunks: &[[u32; 8]; 16], modulus_chunks: &[[u32; 8]; 16]) -> BigUint {
+        // Convert chunks to U4096 for easier manipulation
+        let exp_bytes = chunks_to_bytes::<16>(exp_chunks);
+        let exp_u4096 = U4096::from_le_slice(&exp_bytes);
+        
+        assert!(!chunks_is_zero::<16>(modulus_chunks));
+        
+        let result_chunks = if exp_u4096 == U4096::from_u64(65537u64) {
+            // Optimized path for e = 65537
+            // First reduce base mod modulus using mul_mod_4096(base, 1, modulus)
+            let one_chunks = chunks_one();
+            let mut result_chunks = mul_mod_4096(base_chunks, &one_chunks, modulus_chunks);
+            let base_reduced = result_chunks;
+            
+            // Square 16 times
+            for _ in 0..16 {
+                result_chunks = mul_mod_4096(&result_chunks, &result_chunks, modulus_chunks);
+            }
+            
+            mul_mod_4096(&result_chunks, &base_reduced, modulus_chunks)
+        } else {
+            // Square-and-multiply
+            let one_chunks = chunks_one();
+            let mut result_chunks = one_chunks;
+            let mut base_chunks = mul_mod_4096(base_chunks, &one_chunks, modulus_chunks);
+            let mut exp = exp_u4096;
+            
+            while exp > U4096::ZERO {
+                if exp.is_odd().into() {
+                    result_chunks = mul_mod_4096(&result_chunks, &base_chunks, modulus_chunks);
+                }
+                exp = exp.shr(1);
+                base_chunks = mul_mod_4096(&base_chunks, &base_chunks, modulus_chunks);
+            }
+            
+            result_chunks
+        };
+        
+        let result_u4096 = chunks_to_u4096(&result_chunks);
+        
+        BigUint::from_bytes_le(&result_u4096.to_le_bytes())
     }
     
     /// Generic multiplication using schoolbook algorithm with 256-bit chunks
@@ -262,17 +465,16 @@ mod zkvm {
     /// Generic helper to convert bytes to chunks
     fn bytes_to_chunks<const N: usize>(bytes: &[u8]) -> [[u32; 8]; N] {
         let mut chunks = [[0u32; 8]; N];
+        assert!(bytes.len() == 32 * N, "incorrect length");
         for (i, chunk) in chunks.iter_mut().enumerate() {
             for (j, word) in chunk.iter_mut().enumerate() {
                 let byte_idx = (i * 8 + j) * 4;
-                if byte_idx + 4 <= bytes.len() {
-                    *word = u32::from_le_bytes([
-                        bytes[byte_idx],
-                        bytes[byte_idx + 1], 
-                        bytes[byte_idx + 2],
-                        bytes[byte_idx + 3],
-                    ]);
-                }
+                *word = u32::from_le_bytes([
+                    bytes[byte_idx],
+                    bytes[byte_idx + 1], 
+                    bytes[byte_idx + 2],
+                    bytes[byte_idx + 3],
+                ]);
             }
         }
         chunks
@@ -294,6 +496,28 @@ mod zkvm {
     /// Convert U2048 to chunks
     fn u2048_to_chunks(value: &U2048) -> [[u32; 8]; 8] {
         bytes_to_chunks::<8>(&value.to_le_bytes())
+    }
+
+    /// Convert chunks to U3072
+    fn chunks_to_u3072(chunks: &[[u32; 8]; 12]) -> U3072 {
+        let bytes = chunks_to_bytes::<12>(chunks);
+        U3072::from_le_slice(&bytes)
+    }
+    
+    /// Convert U3072 to chunks
+    fn u3072_to_chunks(value: &U3072) -> [[u32; 8]; 12] {
+        bytes_to_chunks::<12>(&value.to_le_bytes())
+    }
+
+    /// Convert chunks to U4096
+    fn chunks_to_u4096(chunks: &[[u32; 8]; 16]) -> U4096 {
+        let bytes = chunks_to_bytes::<16>(chunks);
+        U4096::from_le_slice(&bytes)
+    }
+    
+    /// Convert U4096 to chunks
+    fn u4096_to_chunks(value: &U4096) -> [[u32; 8]; 16] {
+        bytes_to_chunks::<16>(&value.to_le_bytes())
     }
     
     /// Check if chunk array is zero
@@ -321,7 +545,7 @@ mod zkvm {
         let value_bytes = value.to_bytes_le();
         for (i, &byte) in value_bytes.iter().enumerate() {
             if i >= padded_bytes.len() {
-                break;
+                panic!("value larger than allowed size");
             }
             padded_bytes[i] = byte;
         }
