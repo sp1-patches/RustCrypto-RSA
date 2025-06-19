@@ -65,7 +65,7 @@ pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
 
 /// # ☢️️ WARNING: HAZARDOUS API ☢️
 ///
-/// All inputs are ASSUMED to be on the range of [0, 2^2048).]
+/// All inputs are ASSUMED to be on the range of [0, 2^4096).]
 ///
 /// Attempting to use this function with values outside of this range will result in truncation,
 /// and may have unintended side effects!
@@ -73,285 +73,118 @@ pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
 mod zkvm {
     use super::*;
 
-    /// Modular multiplication for 2048-bit keys
-    fn mul_mod_2048(a_chunks: &[[u32; 8]; 8], b_chunks: &[[u32; 8]; 8], modulus_chunks: &[[u32; 8]; 8]) -> [[u32; 8]; 8] {
-        let prod_chunks = mul_generic_chunks::<8, 16>(a_chunks, b_chunks);
-       
-        // Convert to bytes for SP1 I/O using direct transmute
-        let prod_bytes: [u8; 512] = unsafe {
-            std::mem::transmute::<[[u32; 8]; 16], [u8; 512]>(prod_chunks)
-        };
-        let modulus_bytes: [u8; 256] = unsafe {
-            std::mem::transmute::<[[u32; 8]; 8], [u8; 256]>(*modulus_chunks)
-        };
-        
-        // Call the hook to perform the modmul operation in the executor
-        sp1_lib::io::write(
-            sp1_lib::io::FD_RSA_MUL_MOD,
-            &prod_bytes.into_iter().chain(modulus_bytes.into_iter()).collect::<Vec<_>>(),
-        );
+    // Macro to generate mul_mod functions for different bit sizes
+    macro_rules! impl_mul_mod {
+        ($name:ident, $chunks:expr, $bytes:expr, $fd_type:expr) => {
+            fn $name(
+                a_chunks: &[[u32; 8]; $chunks], 
+                b_chunks: &[[u32; 8]; $chunks], 
+                modulus_chunks: &[[u32; 8]; $chunks]
+            ) -> [[u32; 8]; $chunks] {
+                let prod_chunks = mul_generic_chunks::<$chunks, {$chunks * 2}>(a_chunks, b_chunks);
+                
+                // Convert to bytes for SP1 I/O using direct transmute
+                let prod_bytes: [u8; $bytes * 2] = unsafe {
+                    std::mem::transmute::<[[u32; 8]; $chunks * 2], [u8; $bytes * 2]>(prod_chunks)
+                };
+                let modulus_bytes: [u8; $bytes] = unsafe {
+                    std::mem::transmute::<[[u32; 8]; $chunks], [u8; $bytes]>(*modulus_chunks)
+                };
+                
+                // Call the hook to perform the modmul operation in the executor
+                sp1_lib::io::write(
+                    $fd_type,
+                    &prod_bytes.into_iter().chain(modulus_bytes.into_iter()).collect::<Vec<_>>(),
+                );
 
-        let result_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
-        let quotient_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
+                let result_bytes: [u8; $bytes] = sp1_lib::io::read_vec().try_into().unwrap();
+                let quotient_bytes: [u8; $bytes] = sp1_lib::io::read_vec().try_into().unwrap();
 
-        // Convert back to chunks
-        let result_chunks: [[u32; 8]; 8] = unsafe {
-            std::mem::transmute::<[u8; 256], [[u32; 8]; 8]>(result_bytes)
-        };
-        let quotient_chunks: [[u32; 8]; 8] = unsafe {
-            std::mem::transmute::<[u8; 256], [[u32; 8]; 8]>(quotient_bytes)
-        };
-        
-        // Verify: prod == quotient * modulus + result
-        let quotient_mul_chunks = mul_generic_chunks::<8, 16>(&quotient_chunks, modulus_chunks);
-        
-        let mut verification_prod = quotient_mul_chunks;
-
-        add_generic_chunks(&mut verification_prod, &result_chunks);
-        
-        // Check prod == verification_prod  
-        for i in 0..16 {
-            for j in 0..8 {
-                assert_eq!(prod_chunks[i][j], verification_prod[i][j]);
-            }
-        }
-
-        // Check result < modulus
-        assert_less_than::<8>(&result_chunks, modulus_chunks);
-        
-        result_chunks
-    }
-
-    /// Modular multiplication for 3072-bit keys
-    fn mul_mod_3072(a_chunks: &[[u32; 8]; 12], b_chunks: &[[u32; 8]; 12], modulus_chunks: &[[u32; 8]; 12]) -> [[u32; 8]; 12] {
-        let prod_chunks = mul_generic_chunks::<12, 24>(a_chunks, b_chunks);
-       
-        // Convert to bytes for SP1 I/O using direct transmute
-        let prod_bytes: [u8; 768] = unsafe {
-            std::mem::transmute::<[[u32; 8]; 24], [u8; 768]>(prod_chunks)
-        };
-        let modulus_bytes: [u8; 384] = unsafe {
-            std::mem::transmute::<[[u32; 8]; 12], [u8; 384]>(*modulus_chunks)
-        };
-        
-        // Call the hook to perform the modmul operation in the executor
-        sp1_lib::io::write(
-            sp1_lib::io::FD_RSA_MUL_MOD,
-            &prod_bytes.into_iter().chain(modulus_bytes.into_iter()).collect::<Vec<_>>(),
-        );
-
-        let result_bytes: [u8; 384] = sp1_lib::io::read_vec().try_into().unwrap();
-        let quotient_bytes: [u8; 384] = sp1_lib::io::read_vec().try_into().unwrap();
-
-        // Convert back to chunks
-        let result_chunks: [[u32; 8]; 12] = unsafe {
-            std::mem::transmute::<[u8; 384], [[u32; 8]; 12]>(result_bytes)
-        };
-        let quotient_chunks: [[u32; 8]; 12] = unsafe {
-            std::mem::transmute::<[u8; 384], [[u32; 8]; 12]>(quotient_bytes)
-        };
-        
-        // Verify: prod == quotient * modulus + result
-        let quotient_mul_chunks = mul_generic_chunks::<12, 24>(&quotient_chunks, modulus_chunks);
-        
-        let mut verification_prod = quotient_mul_chunks;
-
-        add_generic_chunks(&mut verification_prod, &result_chunks);
-        
-        // Check prod == verification_prod  
-        for i in 0..24 {
-            for j in 0..8 {
-                assert_eq!(prod_chunks[i][j], verification_prod[i][j]);
-            }
-        }
-
-        // Check result < modulus
-        assert_less_than::<12>(&result_chunks, modulus_chunks);
-        
-        result_chunks
-    }
-
-    /// Modular multiplication for 4096-bit keys
-    fn mul_mod_4096(a_chunks: &[[u32; 8]; 16], b_chunks: &[[u32; 8]; 16], modulus_chunks: &[[u32; 8]; 16]) -> [[u32; 8]; 16] {
-        let prod_chunks = mul_generic_chunks::<16, 32>(a_chunks, b_chunks);
-       
-        // Convert to bytes for SP1 I/O using direct transmute
-        let prod_bytes: [u8; 1024] = unsafe {
-            std::mem::transmute::<[[u32; 8]; 32], [u8; 1024]>(prod_chunks)
-        };
-        let modulus_bytes: [u8; 512] = unsafe {
-            std::mem::transmute::<[[u32; 8]; 16], [u8; 512]>(*modulus_chunks)
-        };
-        
-        // Call the hook to perform the modmul operation in the executor
-        sp1_lib::io::write(
-            sp1_lib::io::FD_RSA_MUL_MOD,
-            &prod_bytes.into_iter().chain(modulus_bytes.into_iter()).collect::<Vec<_>>(),
-        );
-
-        let result_bytes: [u8; 512] = sp1_lib::io::read_vec().try_into().unwrap();
-        let quotient_bytes: [u8; 512] = sp1_lib::io::read_vec().try_into().unwrap();
-
-        // Convert back to chunks
-        let result_chunks: [[u32; 8]; 16] = unsafe {
-            std::mem::transmute::<[u8; 512], [[u32; 8]; 16]>(result_bytes)
-        };
-        let quotient_chunks: [[u32; 8]; 16] = unsafe {
-            std::mem::transmute::<[u8; 512], [[u32; 8]; 16]>(quotient_bytes)
-        };
-        
-        // Verify: prod == quotient * modulus + result
-        let quotient_mul_chunks = mul_generic_chunks::<16, 32>(&quotient_chunks, modulus_chunks);
-        
-        let mut verification_prod = quotient_mul_chunks;
-
-        add_generic_chunks(&mut verification_prod, &result_chunks);
-        
-        // Check prod == verification_prod  
-        for i in 0..32 {
-            for j in 0..8 {
-                assert_eq!(prod_chunks[i][j], verification_prod[i][j]);
-            }
-        }
-
-        // Check result < modulus
-        assert_less_than::<16>(&result_chunks, modulus_chunks);
-        
-        result_chunks
-    }
-
-
-    /// Modular exponentiation for 2048-bit keys
-    pub(super) fn custom_modpow_2048(base_chunks: &[[u32; 8]; 8], exp_chunks: &[[u32; 8]; 8], modulus_chunks: &[[u32; 8]; 8]) -> BigUint {
-        // Convert chunks to U2048 for easier manipulation
-        let exp_bytes = chunks_to_bytes::<8>(exp_chunks);
-        let exp_u2048 = U2048::from_le_slice(&exp_bytes);
-        
-        assert!(!chunks_is_zero::<8>(modulus_chunks));
-        
-        let result_chunks = if exp_u2048 == U2048::from_u64(65537u64) {
-            // Optimized path for e = 65537
-            // First reduce base mod modulus using mul_mod_2048(base, 1, modulus)
-            let one_chunks = chunks_one();
-            let mut result_chunks = mul_mod_2048(base_chunks, &one_chunks, modulus_chunks);
-            let base_reduced = result_chunks;
-            
-            // Square 16 times
-            for _ in 0..16 {
-                result_chunks = mul_mod_2048(&result_chunks, &result_chunks, modulus_chunks);
-            }
-            
-            mul_mod_2048(&result_chunks, &base_reduced, modulus_chunks)
-        } else {
-            // Square-and-multiply
-            let one_chunks = chunks_one();
-            let mut result_chunks = one_chunks;
-            let mut base_chunks = mul_mod_2048(base_chunks, &one_chunks, modulus_chunks);
-            let mut exp = exp_u2048;
-            
-            while exp > U2048::ZERO {
-                if exp.is_odd().into() {
-                    result_chunks = mul_mod_2048(&result_chunks, &base_chunks, modulus_chunks);
+                // Convert back to chunks
+                let result_chunks: [[u32; 8]; $chunks] = unsafe {
+                    std::mem::transmute::<[u8; $bytes], [[u32; 8]; $chunks]>(result_bytes)
+                };
+                let quotient_chunks: [[u32; 8]; $chunks] = unsafe {
+                    std::mem::transmute::<[u8; $bytes], [[u32; 8]; $chunks]>(quotient_bytes)
+                };
+                
+                // Verify: prod == quotient * modulus + result and 0 <= result < modulus.
+                let quotient_mul_chunks = mul_generic_chunks::<$chunks, {$chunks * 2}>(&quotient_chunks, modulus_chunks);
+                
+                let mut verification_prod = quotient_mul_chunks;
+                add_generic_chunks(&mut verification_prod, &result_chunks);
+                
+                for i in 0..($chunks * 2) {
+                    for j in 0..8 {
+                        assert_eq!(prod_chunks[i][j], verification_prod[i][j], "equality check failed");
+                    }
                 }
-                exp = exp.shr(1);
-                base_chunks = mul_mod_2048(&base_chunks, &base_chunks, modulus_chunks);
+
+                assert_less_than::<$chunks>(&result_chunks, modulus_chunks);
+                
+                result_chunks
             }
-            
-            result_chunks
         };
-        
-        let result_u2048 = chunks_to_u2048(&result_chunks);
-        
-        BigUint::from_bytes_le(&result_u2048.to_le_bytes())
     }
 
-    /// Modular exponentiation for 3072-bit keys
-    pub(super) fn custom_modpow_3072(base_chunks: &[[u32; 8]; 12], exp_chunks: &[[u32; 8]; 12], modulus_chunks: &[[u32; 8]; 12]) -> BigUint {
-        // Convert chunks to U3072 for easier manipulation
-        let exp_bytes = chunks_to_bytes::<12>(exp_chunks);
-        let exp_u3072 = U3072::from_le_slice(&exp_bytes);
-        
-        assert!(!chunks_is_zero::<12>(modulus_chunks));
-        
-        let result_chunks = if exp_u3072 == U3072::from_u64(65537u64) {
-            // Optimized path for e = 65537
-            // First reduce base mod modulus using mul_mod_3072(base, 1, modulus)
-            let one_chunks = chunks_one();
-            let mut result_chunks = mul_mod_3072(base_chunks, &one_chunks, modulus_chunks);
-            let base_reduced = result_chunks;
-            
-            // Square 16 times
-            for _ in 0..16 {
-                result_chunks = mul_mod_3072(&result_chunks, &result_chunks, modulus_chunks);
+    // Generate the three mul_mod functions
+    impl_mul_mod!(mul_mod_2048, 8, 256, sp1_lib::io::FD_RSA_MUL_MOD);
+    impl_mul_mod!(mul_mod_3072, 12, 384, sp1_lib::io::FD_RSA_MUL_MOD);
+    impl_mul_mod!(mul_mod_4096, 16, 512, sp1_lib::io::FD_RSA_MUL_MOD);
+
+    // Macro to generate modpow functions
+    macro_rules! impl_modpow {
+        ($name:ident, $chunks:expr, $bigint_type:ty, $mul_mod_fn:ident) => {
+            pub(super) fn $name(
+                base_chunks: &[[u32; 8]; $chunks], 
+                exp_chunks: &[[u32; 8]; $chunks], 
+                modulus_chunks: &[[u32; 8]; $chunks]
+            ) -> BigUint {
+                // Convert chunks to crypto_bigint type for easier manipulation
+                let exp_bytes = chunks_to_bytes::<$chunks>(exp_chunks);
+                let exp_bigint = <$bigint_type>::from_le_slice(&exp_bytes);
+                
+                assert!(!chunks_is_zero::<$chunks>(modulus_chunks), "modulo cannot be zero");
+                
+                let result_chunks = if exp_bigint == <$bigint_type>::from_u64(65537u64) {
+                    // Optimized path for e = 65537
+                    let one_chunks = chunks_one::<$chunks>();
+                    let mut result_chunks = $mul_mod_fn(base_chunks, &one_chunks, modulus_chunks);
+                    let base_reduced = result_chunks;
+                    
+                    // Square 16 times
+                    for _ in 0..16 {
+                        result_chunks = $mul_mod_fn(&result_chunks, &result_chunks, modulus_chunks);
+                    }
+                    
+                    $mul_mod_fn(&result_chunks, &base_reduced, modulus_chunks)
+                } else {
+                    // Square-and-multiply
+                    let one_chunks = chunks_one::<$chunks>();
+                    let mut result_chunks = one_chunks;
+                    let mut base_chunks = $mul_mod_fn(base_chunks, &one_chunks, modulus_chunks);
+                    let mut exp = exp_bigint;
+                    
+                    while exp > <$bigint_type>::ZERO {
+                        if exp.is_odd().into() {
+                            result_chunks = $mul_mod_fn(&result_chunks, &base_chunks, modulus_chunks);
+                        }
+                        exp = exp.shr(1);
+                        base_chunks = $mul_mod_fn(&base_chunks, &base_chunks, modulus_chunks);
+                    }
+                    
+                    result_chunks
+                };
+                
+                BigUint::from_bytes_le(&chunks_to_bytes::<$chunks>(&result_chunks))
             }
-            
-            mul_mod_3072(&result_chunks, &base_reduced, modulus_chunks)
-        } else {
-            // Square-and-multiply
-            let one_chunks = chunks_one();
-            let mut result_chunks = one_chunks;
-            let mut base_chunks = mul_mod_3072(base_chunks, &one_chunks, modulus_chunks);
-            let mut exp = exp_u3072;
-            
-            while exp > U3072::ZERO {
-                if exp.is_odd().into() {
-                    result_chunks = mul_mod_3072(&result_chunks, &base_chunks, modulus_chunks);
-                }
-                exp = exp.shr(1);
-                base_chunks = mul_mod_3072(&base_chunks, &base_chunks, modulus_chunks);
-            }
-            
-            result_chunks
         };
-        
-        let result_u3072 = chunks_to_u3072(&result_chunks);
-        
-        BigUint::from_bytes_le(&result_u3072.to_le_bytes())
     }
 
-     /// Modular exponentiation for 4096-bit keys
-     pub(super) fn custom_modpow_4096(base_chunks: &[[u32; 8]; 16], exp_chunks: &[[u32; 8]; 16], modulus_chunks: &[[u32; 8]; 16]) -> BigUint {
-        // Convert chunks to U4096 for easier manipulation
-        let exp_bytes = chunks_to_bytes::<16>(exp_chunks);
-        let exp_u4096 = U4096::from_le_slice(&exp_bytes);
-        
-        assert!(!chunks_is_zero::<16>(modulus_chunks));
-        
-        let result_chunks = if exp_u4096 == U4096::from_u64(65537u64) {
-            // Optimized path for e = 65537
-            // First reduce base mod modulus using mul_mod_4096(base, 1, modulus)
-            let one_chunks = chunks_one();
-            let mut result_chunks = mul_mod_4096(base_chunks, &one_chunks, modulus_chunks);
-            let base_reduced = result_chunks;
-            
-            // Square 16 times
-            for _ in 0..16 {
-                result_chunks = mul_mod_4096(&result_chunks, &result_chunks, modulus_chunks);
-            }
-            
-            mul_mod_4096(&result_chunks, &base_reduced, modulus_chunks)
-        } else {
-            // Square-and-multiply
-            let one_chunks = chunks_one();
-            let mut result_chunks = one_chunks;
-            let mut base_chunks = mul_mod_4096(base_chunks, &one_chunks, modulus_chunks);
-            let mut exp = exp_u4096;
-            
-            while exp > U4096::ZERO {
-                if exp.is_odd().into() {
-                    result_chunks = mul_mod_4096(&result_chunks, &base_chunks, modulus_chunks);
-                }
-                exp = exp.shr(1);
-                base_chunks = mul_mod_4096(&base_chunks, &base_chunks, modulus_chunks);
-            }
-            
-            result_chunks
-        };
-        
-        let result_u4096 = chunks_to_u4096(&result_chunks);
-        
-        BigUint::from_bytes_le(&result_u4096.to_le_bytes())
-    }
+    // Generate the three modpow functions
+    impl_modpow!(custom_modpow_2048, 8, U2048, mul_mod_2048);
+    impl_modpow!(custom_modpow_3072, 12, U3072, mul_mod_3072);
+    impl_modpow!(custom_modpow_4096, 16, U4096, mul_mod_4096);
     
     /// Generic multiplication using schoolbook algorithm with 256-bit chunks
     /// Returns a vector of 256-bit chunks representing the full product
@@ -456,10 +289,10 @@ mod zkvm {
                 if result_chunk[i][j] < modulus_chunk[i][j] {
                     return;
                 }
-                assert!(result_chunk[i][j] == modulus_chunk[i][j]);
+                assert!(result_chunk[i][j] == modulus_chunk[i][j], "result < modulus check failed");
             }
         }
-        assert!(false);
+        assert!(false, "result < modulus check failed");
     }
     
     /// Generic helper to convert bytes to chunks
@@ -487,39 +320,6 @@ mod zkvm {
             .collect()
     }
     
-    /// Convert chunks to U2048
-    fn chunks_to_u2048(chunks: &[[u32; 8]; 8]) -> U2048 {
-        let bytes = chunks_to_bytes::<8>(chunks);
-        U2048::from_le_slice(&bytes)
-    }
-    
-    /// Convert U2048 to chunks
-    fn u2048_to_chunks(value: &U2048) -> [[u32; 8]; 8] {
-        bytes_to_chunks::<8>(&value.to_le_bytes())
-    }
-
-    /// Convert chunks to U3072
-    fn chunks_to_u3072(chunks: &[[u32; 8]; 12]) -> U3072 {
-        let bytes = chunks_to_bytes::<12>(chunks);
-        U3072::from_le_slice(&bytes)
-    }
-    
-    /// Convert U3072 to chunks
-    fn u3072_to_chunks(value: &U3072) -> [[u32; 8]; 12] {
-        bytes_to_chunks::<12>(&value.to_le_bytes())
-    }
-
-    /// Convert chunks to U4096
-    fn chunks_to_u4096(chunks: &[[u32; 8]; 16]) -> U4096 {
-        let bytes = chunks_to_bytes::<16>(chunks);
-        U4096::from_le_slice(&bytes)
-    }
-    
-    /// Convert U4096 to chunks
-    fn u4096_to_chunks(value: &U4096) -> [[u32; 8]; 16] {
-        bytes_to_chunks::<16>(&value.to_le_bytes())
-    }
-    
     /// Check if chunk array is zero
     fn chunks_is_zero<const N: usize>(chunks: &[[u32; 8]; N]) -> bool {
         for i in 0..N {
@@ -541,7 +341,7 @@ mod zkvm {
     
     /// Convert BigUint to chunks for arbitrary key sizes
     pub(super) fn from_biguint_to_chunks<const N: usize>(value: &BigUint) -> [[u32; 8]; N] {
-        let mut padded_bytes = vec![0u8; N * 32]; // N chunks * 32 bytes per chunk
+        let mut padded_bytes = vec![0u8; N * 32];
         let value_bytes = value.to_bytes_le();
         for (i, &byte) in value_bytes.iter().enumerate() {
             if i >= padded_bytes.len() {
