@@ -13,7 +13,7 @@ use bytemuck::cast_ref;
 #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
 use core::convert::TryInto;
 #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
-use crypto_bigint::{Encoding, Integer as CryptoInteger, NonZero, U2048, U256, U4096};
+use crypto_bigint::{Encoding, Integer as CryptoInteger, NonZero, U2048, U256, U3072, U4096, U6144, U8192};
 #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
 use sp1_lib::io::hint_slice;
 
@@ -30,16 +30,18 @@ use crate::traits::{PrivateKeyParts, PublicKeyParts};
 pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
     #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
     {
-        if key.size() == 256 {
-            use zkvm::*;
-
-            let m_u2048 = from_biguint_to_u2048(m);
-            let e_u2048 = from_biguint_to_u2048(key.e());
-            let n_u2048 = from_biguint_to_u2048(key.n());
-
-            let result = custom_modpow_u2048(&m_u2048, &e_u2048, &n_u2048);
-
-            return Ok(result);
+        match key.size() {
+            256 => {
+                use zkvm::*;
+                let m_chunks = zkvm::from_biguint_to_chunks::<8>(m);
+                let e_chunks = zkvm::from_biguint_to_chunks::<8>(key.e()); 
+                let n_chunks = zkvm::from_biguint_to_chunks::<8>(key.n());
+                let result = zkvm::custom_modpow_2048(&m_chunks, &e_chunks, &n_chunks);
+                return Ok(result);
+            },
+            _ => {
+                // Fall through to standard modpow for unsupported sizes
+            }
         }
     }
     Ok(m.modpow(key.e(), key.n()))
@@ -55,126 +57,277 @@ pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
 mod zkvm {
     use super::*;
 
-    /// Performs modular exponentiation of `base` to the power of `exp` modulo `modulus`.
-    /// This function takes in U2048 operands and returns the result as a BigUint.
-    pub(super) fn custom_modpow_u2048(base: &U2048, exp: &U2048, modulus: &U2048) -> BigUint {
-        if *modulus == U2048::ONE {
-            return BigUint::zero();
-        }
-
-        // The most common exponent is 65537, so we optimize for that case, otherwise we use the
-        // generic square and multiply algorithm.
-        let result = if (exp == &U2048::from_u64(65537u64)) {
-            let modulus_nonzero = NonZero::new(*modulus).unwrap(); // Convert modulus to NonZero
-            let mut base = base.rem(&modulus_nonzero);
-            let mut result = base;
-
-            // Square 16 times
-            for i in 0..16 {
-                result = mul_mod_u2048(&result, &result, &modulus_nonzero);
-            }
-            // Multiply by the base
-            mul_mod_u2048(&result, &base, &modulus_nonzero)
-        } else {
-            let mut result = U2048::ONE;
-            let modulus_nonzero = NonZero::new(*modulus).unwrap(); // Convert modulus to NonZero
-            let mut base = base.rem(&modulus_nonzero);
-
-            let mut exp = *exp;
-            while exp > U2048::ZERO {
-                if exp.is_odd().into() {
-                    result = mul_mod_u2048(&result, &base, &modulus_nonzero);
-                }
-                exp = exp.shr(1);
-                base = mul_mod_u2048(&base, &base, &modulus_nonzero);
-            }
-
-            result
+    /// Modular multiplication for 2048-bit keys
+    fn mul_mod_2048(a_chunks: &[[u32; 8]; 8], b_chunks: &[[u32; 8]; 8], modulus_chunks: &[[u32; 8]; 8]) -> [[u32; 8]; 8] {
+        let prod_chunks = mul_generic_chunks::<8, 16>(a_chunks, b_chunks);
+       
+        // Convert to bytes for SP1 I/O using direct transmute
+        let prod_bytes: [u8; 512] = unsafe {
+            std::mem::transmute::<[[u32; 8]; 16], [u8; 512]>(prod_chunks)
         };
-
-        let result_biguint = BigUint::from_bytes_le(&result.to_le_bytes());
-        result_biguint
-    }
-
-    /// Performs modular multiplication of `a` and `b` with `modulus`.
-    /// It calculates the quotient and remainder in unconstrained.
-    ///
-    /// Note: This function assumes that 0 <= a, b < modulus.
-    fn mul_mod_u2048(a: &U2048, b: &U2048, modulus: &U2048) -> U2048 {
-        let prod = mul_u2048(*a, *b);
-
-        // Call the hook to perform the modmul opertaion in the executor.
+        let modulus_bytes: [u8; 256] = unsafe {
+            std::mem::transmute::<[[u32; 8]; 8], [u8; 256]>(*modulus_chunks)
+        };
+        
+        // Call the hook to perform the modmul operation in the executor
         sp1_lib::io::write(
             sp1_lib::io::FD_RSA_MUL_MOD,
-            &prod
-                .to_le_bytes()
-                .into_iter()
-                .chain(modulus.to_le_bytes().into_iter())
-                .collect::<Vec<_>>(),
+            &prod_bytes.into_iter().chain(modulus_bytes.into_iter()).collect::<Vec<_>>(),
         );
 
         let result_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
         let quotient_bytes: [u8; 256] = sp1_lib::io::read_vec().try_into().unwrap();
 
-        let q_array = U2048::from_le_slice(&quotient_bytes);
-        let result = U2048::from_le_slice(&result_bytes);
+        // Convert back to chunks
+        let result_chunks: [[u32; 8]; 8] = unsafe {
+            std::mem::transmute::<[u8; 256], [[u32; 8]; 8]>(result_bytes)
+        };
+        let quotient_chunks: [[u32; 8]; 8] = unsafe {
+            std::mem::transmute::<[u8; 256], [[u32; 8]; 8]>(quotient_bytes)
+        };
+        
+        // Verify: prod == quotient * modulus + result
+        let quotient_mul_chunks = mul_generic_chunks::<8, 16>(&quotient_chunks, modulus_chunks);
+        
+        let mut verification_prod = quotient_mul_chunks;
 
-        assert!(result >= U2048::ZERO && result < *modulus);
-        assert!(prod == mul_u2048(q_array, *modulus).wrapping_add(&U4096::from(&result)));
-        result
+        add_generic_chunks(&mut verification_prod, &result_chunks);
+        
+        // Check prod == verification_prod  
+        for i in 0..16 {
+            for j in 0..8 {
+                assert_eq!(prod_chunks[i][j], verification_prod[i][j]);
+            }
+        }
+
+        // Check result < modulus
+        assert_less_than::<8>(&result_chunks, modulus_chunks);
+        
+        result_chunks
     }
 
-    /// Performs multiplication of `a` and `b`, which are both U2048,
-    /// and returns a U4096.
-    fn mul_u2048(a_array: U2048, b_array: U2048) -> U4096 {
-        let mut sum = U4096::ZERO;
+    /// Modular exponentiation for 2048-bit keys
+    pub(super) fn custom_modpow_2048(base_chunks: &[[u32; 8]; 8], exp_chunks: &[[u32; 8]; 8], modulus_chunks: &[[u32; 8]; 8]) -> BigUint {
+        // Convert chunks to U2048 for easier manipulation
+        let exp_bytes = chunks_to_bytes::<8>(exp_chunks);
+        let exp_u2048 = U2048::from_le_slice(&exp_bytes);
+        
+        assert!(!chunks_is_zero::<8>(modulus_chunks));
+        
+        let result_chunks = if exp_u2048 == U2048::from_u64(65537u64) {
+            // Optimized path for e = 65537
+            // First reduce base mod modulus using mul_mod_2048(base, 1, modulus)
+            let one_chunks = chunks_one();
+            let mut result_chunks = mul_mod_2048(base_chunks, &one_chunks, modulus_chunks);
+            let base_reduced = result_chunks;
+            
+            // Square 16 times
+            for _ in 0..16 {
+                result_chunks = mul_mod_2048(&result_chunks, &result_chunks, modulus_chunks);
+            }
+            
+            mul_mod_2048(&result_chunks, &base_reduced, modulus_chunks)
+        } else {
+            // Square-and-multiply
+            let one_chunks = chunks_one();
+            let mut result_chunks = one_chunks;
+            let mut base_chunks = mul_mod_2048(base_chunks, &one_chunks, modulus_chunks);
+            let mut exp = exp_u2048;
+            
+            while exp > U2048::ZERO {
+                if exp.is_odd().into() {
+                    result_chunks = mul_mod_2048(&result_chunks, &base_chunks, modulus_chunks);
+                }
+                exp = exp.shr(1);
+                base_chunks = mul_mod_2048(&base_chunks, &base_chunks, modulus_chunks);
+            }
+            
+            result_chunks
+        };
+        
+        let result_u2048 = chunks_to_u2048(&result_chunks);
+        
+        BigUint::from_bytes_le(&result_u2048.to_le_bytes())
+    }
+    
+    /// Generic multiplication using schoolbook algorithm with 256-bit chunks
+    /// Returns a vector of 256-bit chunks representing the full product
+    fn mul_generic_chunks<const N: usize, const N2: usize>(a_chunks: &[[u32; 8]; N], b_chunks: &[[u32; 8]; N]) -> [[u32; 8]; N2] {
+        let mut out = [[0u32; 8]; N2];
+        
+        let mut lo = [0u32; 8];
+        let mut hi = [0u32; 8];
+        let mut tmp_hi = [0u32; 8];
+        let zero_carry = [0u32; 8];
+        
+        for i in 0..N {
+            for j in 0..N {
+                let k = i + j;
+                
+                unsafe {
+                    sp1_lib::syscall_uint256_mul_with_carry(
+                        a_chunks[i].as_ptr() as *const [u32; 8],
+                        b_chunks[j].as_ptr() as *const [u32; 8],
+                        zero_carry.as_ptr() as *const [u32; 8],
+                        lo.as_mut_ptr() as *mut [u32; 8],
+                        hi.as_mut_ptr() as *mut [u32; 8],
+                    );
+                }
+                
+                unsafe {
+                    sp1_lib::syscall_uint256_add_with_carry(
+                        out[k].as_ptr() as *const [u32; 8],
+                        lo.as_ptr() as *const [u32; 8],
+                        zero_carry.as_ptr() as *const [u32; 8],
+                        out[k].as_mut_ptr() as *mut [u32; 8],
+                        tmp_hi.as_mut_ptr() as *mut [u32; 8],
+                    );
+                }
 
-        for (i, chunk) in a_array.as_words().chunks(8).enumerate() {
-            let mut shifted_words = [0u32; 128];
-            let prod_result_ptr = shifted_words[i * 8..].as_mut_ptr();
+                unsafe {
+                    sp1_lib::syscall_uint256_add_with_carry(
+                        out[k + 1].as_ptr() as *const [u32; 8],
+                        hi.as_ptr() as *const [u32; 8],
+                        tmp_hi.as_ptr() as *const [u32; 8],
+                        out[k + 1].as_mut_ptr() as *mut [u32; 8],
+                        tmp_hi.as_mut_ptr() as *mut [u32; 8],
+                    );
+                }
+                
+                let mut idx = k + 2;
+                while tmp_hi[0] != 0 && idx < N2 {
+                    unsafe {
+                        sp1_lib::syscall_uint256_add_with_carry(
+                            out[idx].as_ptr() as *const [u32; 8],
+                            zero_carry.as_ptr() as *const [u32; 8],
+                            tmp_hi.as_ptr() as *const [u32; 8],
+                            out[idx].as_mut_ptr() as *mut [u32; 8],
+                            tmp_hi.as_mut_ptr() as *mut [u32; 8],
+                        );
+                    }
+                    idx += 1;
+                }
+            }
+        }
+        
+        out
+    }
+
+    /// Generic addition of two chunk arrays with different sizes
+    /// Adds smaller array to the lower part of larger array, handling carries
+    fn add_generic_chunks(larger: &mut [[u32; 8]], smaller: &[[u32; 8]]) {
+        let mut carry = [0u32; 8];
+        let zero_carry = [0u32; 8];
+        
+        for i in 0..smaller.len() {
             unsafe {
-                sp1_lib::syscall_u256x2048_mul(
-                    chunk.as_ptr() as *const [u32; 8],
-                    b_array.as_words().as_ptr() as *const [u32; 64],
-                    prod_result_ptr as *mut [u32; 64],
-                    prod_result_ptr.add(64) as *mut [u32; 8],
+                sp1_lib::syscall_uint256_add_with_carry(
+                    larger[i].as_ptr() as *const [u32; 8],
+                    smaller[i].as_ptr() as *const [u32; 8],
+                    carry.as_ptr() as *const [u32; 8],
+                    larger[i].as_mut_ptr() as *mut [u32; 8],
+                    carry.as_mut_ptr() as *mut [u32; 8],
                 );
             }
-            let shifted_prod = U4096::from_words(shifted_words);
-            sum = sum.wrapping_add(&shifted_prod);
         }
-
-        sum
+        
+        let mut idx = smaller.len();
+        while idx < larger.len() && carry[0] != 0 {
+            unsafe {
+                sp1_lib::syscall_uint256_add_with_carry(
+                    larger[idx].as_ptr() as *const [u32; 8],
+                    zero_carry.as_ptr() as *const [u32; 8],
+                    carry.as_ptr() as *const [u32; 8],
+                    larger[idx].as_mut_ptr() as *mut [u32; 8],
+                    carry.as_mut_ptr() as *mut [u32; 8],
+                );
+            }
+            idx += 1;
+        }
     }
 
-    /// Performs multiplication of `a` a U256 and `b` which is a U2048.
-    fn mul_array(a: U256, b_array: U2048) -> U4096 {
-        let mut result_words = [0u32; 128];
-        let result_ptr = result_words.as_mut_ptr();
-        unsafe {
-            sp1_lib::syscall_u256x2048_mul(
-                cast_ref(&a.to_words()),
-                cast_ref(&b_array.to_words()),
-                result_ptr as *mut [u32; 64],
-                result_ptr.add(64) as *mut [u32; 8],
-            );
+    /// Assert that the result is less than the modulus
+    fn assert_less_than<const N: usize>(result_chunk: &[[u32; 8]; N], modulus_chunk: &[[u32; 8]; N]) {
+        for i in (0..N).rev() {
+            for j in (0..8).rev() {
+                if result_chunk[i][j] < modulus_chunk[i][j] {
+                    return;
+                }
+                assert!(result_chunk[i][j] == modulus_chunk[i][j]);
+            }
         }
-
-        U4096::from_words(result_words)
+        assert!(false);
     }
-
-    /// Converts a BigUint to a U2048.
-    pub(super) fn from_biguint_to_u2048(value: &BigUint) -> U2048 {
-        let mut padded_bytes = [0u8; 256];
-        let a_bytes = value.to_bytes_le();
-        for (i, &byte) in a_bytes.iter().enumerate() {
-            if i >= 256 {
+    
+    /// Generic helper to convert bytes to chunks
+    fn bytes_to_chunks<const N: usize>(bytes: &[u8]) -> [[u32; 8]; N] {
+        let mut chunks = [[0u32; 8]; N];
+        for (i, chunk) in chunks.iter_mut().enumerate() {
+            for (j, word) in chunk.iter_mut().enumerate() {
+                let byte_idx = (i * 8 + j) * 4;
+                if byte_idx + 4 <= bytes.len() {
+                    *word = u32::from_le_bytes([
+                        bytes[byte_idx],
+                        bytes[byte_idx + 1], 
+                        bytes[byte_idx + 2],
+                        bytes[byte_idx + 3],
+                    ]);
+                }
+            }
+        }
+        chunks
+    }
+    
+    /// Generic helper to convert chunks to bytes
+    fn chunks_to_bytes<const N: usize>(chunks: &[[u32; 8]; N]) -> Vec<u8> {
+        chunks.iter()
+            .flat_map(|chunk| chunk.iter().flat_map(|&word| word.to_le_bytes()))
+            .collect()
+    }
+    
+    /// Convert chunks to U2048
+    fn chunks_to_u2048(chunks: &[[u32; 8]; 8]) -> U2048 {
+        let bytes = chunks_to_bytes::<8>(chunks);
+        U2048::from_le_slice(&bytes)
+    }
+    
+    /// Convert U2048 to chunks
+    fn u2048_to_chunks(value: &U2048) -> [[u32; 8]; 8] {
+        bytes_to_chunks::<8>(&value.to_le_bytes())
+    }
+    
+    /// Check if chunk array is zero
+    fn chunks_is_zero<const N: usize>(chunks: &[[u32; 8]; N]) -> bool {
+        for i in 0..N {
+            for j in 0..8 {
+                if chunks[i][j] != 0 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+    
+    /// Get chunk array representing one
+    fn chunks_one<const N: usize>() -> [[u32; 8]; N] {
+        let mut chunks = [[0u32; 8]; N];
+        chunks[0][0] = 1;
+        chunks
+    }
+    
+    /// Convert BigUint to chunks for arbitrary key sizes
+    pub(super) fn from_biguint_to_chunks<const N: usize>(value: &BigUint) -> [[u32; 8]; N] {
+        let mut padded_bytes = vec![0u8; N * 32]; // N chunks * 32 bytes per chunk
+        let value_bytes = value.to_bytes_le();
+        for (i, &byte) in value_bytes.iter().enumerate() {
+            if i >= padded_bytes.len() {
                 break;
             }
             padded_bytes[i] = byte;
         }
-        U2048::from_le_slice(&padded_bytes)
+        bytes_to_chunks(&padded_bytes)
     }
+
 }
 
 /// ⚠️ Performs raw RSA decryption with no padding or error checking.

@@ -937,6 +937,7 @@ checksum = "4dccd0940a2dcdf68d092b8cbab7dc0ad8fa938bf95787e1b916b0e3d0e8e970"
 [[package]]
 name = "sp1-lib"
 version = "5.0.0"
+source = "git+https://github.com/succinctlabs/sp1-wip.git?branch=min/better-rsa#1f5056d7a9cc19e1bcef850f9fbdbd22241382ea"
 dependencies = [
  "bincode",
  "elliptic-curve",
@@ -947,6 +948,7 @@ dependencies = [
 [[package]]
 name = "sp1-primitives"
 version = "5.0.0"
+source = "git+https://github.com/succinctlabs/sp1-wip.git?branch=min/better-rsa#1f5056d7a9cc19e1bcef850f9fbdbd22241382ea"
 dependencies = [
  "bincode",
  "blake3",
