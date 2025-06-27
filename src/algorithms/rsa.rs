@@ -20,6 +20,19 @@ use sp1_lib::io::hint_slice;
 use crate::errors::{Error, Result};
 use crate::traits::{PrivateKeyParts, PublicKeyParts};
 
+// Architecture-specific type definitions
+#[cfg(target_pointer_width = "32")]
+type ChunkWord = u32;
+#[cfg(target_pointer_width = "64")]
+type ChunkWord = u64;
+
+#[cfg(target_pointer_width = "32")]
+const CHUNK_SIZE: usize = 8;
+#[cfg(target_pointer_width = "64")]
+const CHUNK_SIZE: usize = 4;
+
+type Chunk = [ChunkWord; CHUNK_SIZE];
+
 /// ⚠️ Raw RSA encryption of m with the public key. No padding is performed.
 ///
 /// # ☢️️ WARNING: HAZARDOUS API ☢️
@@ -77,18 +90,18 @@ mod zkvm {
     macro_rules! impl_mul_mod {
         ($name:ident, $chunks:expr, $bytes:expr, $fd_type:expr) => {
             fn $name(
-                a_chunks: &[[u32; 8]; $chunks], 
-                b_chunks: &[[u32; 8]; $chunks], 
-                modulus_chunks: &[[u32; 8]; $chunks]
-            ) -> [[u32; 8]; $chunks] {
+                a_chunks: &[Chunk; $chunks], 
+                b_chunks: &[Chunk; $chunks], 
+                modulus_chunks: &[Chunk; $chunks]
+            ) -> [Chunk; $chunks] {
                 let prod_chunks = mul_generic_chunks::<$chunks, {$chunks * 2}>(a_chunks, b_chunks);
                 
                 // Convert to bytes for SP1 I/O using direct transmute
                 let prod_bytes: [u8; $bytes * 2] = unsafe {
-                    std::mem::transmute::<[[u32; 8]; $chunks * 2], [u8; $bytes * 2]>(prod_chunks)
+                    std::mem::transmute::<[Chunk; $chunks * 2], [u8; $bytes * 2]>(prod_chunks)
                 };
                 let modulus_bytes: [u8; $bytes] = unsafe {
-                    std::mem::transmute::<[[u32; 8]; $chunks], [u8; $bytes]>(*modulus_chunks)
+                    std::mem::transmute::<[Chunk; $chunks], [u8; $bytes]>(*modulus_chunks)
                 };
                 
                 // Call the hook to perform the modmul operation in the executor
@@ -101,11 +114,11 @@ mod zkvm {
                 let quotient_bytes: [u8; $bytes] = sp1_lib::io::read_vec().try_into().unwrap();
 
                 // Convert back to chunks
-                let result_chunks: [[u32; 8]; $chunks] = unsafe {
-                    std::mem::transmute::<[u8; $bytes], [[u32; 8]; $chunks]>(result_bytes)
+                let result_chunks: [Chunk; $chunks] = unsafe {
+                    std::mem::transmute::<[u8; $bytes], [Chunk; $chunks]>(result_bytes)
                 };
-                let quotient_chunks: [[u32; 8]; $chunks] = unsafe {
-                    std::mem::transmute::<[u8; $bytes], [[u32; 8]; $chunks]>(quotient_bytes)
+                let quotient_chunks: [Chunk; $chunks] = unsafe {
+                    std::mem::transmute::<[u8; $bytes], [Chunk; $chunks]>(quotient_bytes)
                 };
                 
                 // Verify: prod == quotient * modulus + result and 0 <= result < modulus.
@@ -115,7 +128,7 @@ mod zkvm {
                 add_generic_chunks(&mut verification_prod, &result_chunks);
                 
                 for i in 0..($chunks * 2) {
-                    for j in 0..8 {
+                    for j in 0..CHUNK_SIZE {
                         assert_eq!(prod_chunks[i][j], verification_prod[i][j], "equality check failed");
                     }
                 }
@@ -136,9 +149,9 @@ mod zkvm {
     macro_rules! impl_modpow {
         ($name:ident, $chunks:expr, $bigint_type:ty, $mul_mod_fn:ident) => {
             pub(super) fn $name(
-                base_chunks: &[[u32; 8]; $chunks], 
-                exp_chunks: &[[u32; 8]; $chunks], 
-                modulus_chunks: &[[u32; 8]; $chunks]
+                base_chunks: &[Chunk; $chunks], 
+                exp_chunks: &[Chunk; $chunks], 
+                modulus_chunks: &[Chunk; $chunks]
             ) -> BigUint {
                 // Convert chunks to crypto_bigint type for easier manipulation
                 let exp_bytes = chunks_to_bytes::<$chunks>(exp_chunks);
@@ -188,13 +201,13 @@ mod zkvm {
     
     /// Generic multiplication using schoolbook algorithm with 256-bit chunks
     /// Returns a vector of 256-bit chunks representing the full product
-    fn mul_generic_chunks<const N: usize, const N2: usize>(a_chunks: &[[u32; 8]; N], b_chunks: &[[u32; 8]; N]) -> [[u32; 8]; N2] {
-        let mut out = [[0u32; 8]; N2];
+    fn mul_generic_chunks<const N: usize, const N2: usize>(a_chunks: &[Chunk; N], b_chunks: &[Chunk; N]) -> [Chunk; N2] {
+        let mut out = [chunk_zero(); N2];
         
-        let mut lo = [0u32; 8];
-        let mut hi = [0u32; 8];
-        let mut tmp_hi = [0u32; 8];
-        let zero_carry = [0u32; 8];
+        let mut lo = chunk_zero();
+        let mut hi = chunk_zero();
+        let mut tmp_hi = chunk_zero();
+        let zero_carry = chunk_zero();
         
         for i in 0..N {
             for j in 0..N {
@@ -202,31 +215,31 @@ mod zkvm {
                 
                 unsafe {
                     sp1_lib::syscall_uint256_mul_with_carry(
-                        a_chunks[i].as_ptr() as *const [u32; 8],
-                        b_chunks[j].as_ptr() as *const [u32; 8],
-                        zero_carry.as_ptr() as *const [u32; 8],
-                        lo.as_mut_ptr() as *mut [u32; 8],
-                        hi.as_mut_ptr() as *mut [u32; 8],
+                        a_chunks[i].as_ptr() as *const Chunk,
+                        b_chunks[j].as_ptr() as *const Chunk,
+                        zero_carry.as_ptr() as *const Chunk,
+                        lo.as_mut_ptr() as *mut Chunk,
+                        hi.as_mut_ptr() as *mut Chunk,
                     );
                 }
                 
                 unsafe {
                     sp1_lib::syscall_uint256_add_with_carry(
-                        out[k].as_ptr() as *const [u32; 8],
-                        lo.as_ptr() as *const [u32; 8],
-                        zero_carry.as_ptr() as *const [u32; 8],
-                        out[k].as_mut_ptr() as *mut [u32; 8],
-                        tmp_hi.as_mut_ptr() as *mut [u32; 8],
+                        out[k].as_ptr() as *const Chunk,
+                        lo.as_ptr() as *const Chunk,
+                        zero_carry.as_ptr() as *const Chunk,
+                        out[k].as_mut_ptr() as *mut Chunk,
+                        tmp_hi.as_mut_ptr() as *mut Chunk,
                     );
                 }
 
                 unsafe {
                     sp1_lib::syscall_uint256_add_with_carry(
-                        out[k + 1].as_ptr() as *const [u32; 8],
-                        hi.as_ptr() as *const [u32; 8],
-                        tmp_hi.as_ptr() as *const [u32; 8],
-                        out[k + 1].as_mut_ptr() as *mut [u32; 8],
-                        tmp_hi.as_mut_ptr() as *mut [u32; 8],
+                        out[k + 1].as_ptr() as *const Chunk,
+                        hi.as_ptr() as *const Chunk,
+                        tmp_hi.as_ptr() as *const Chunk,
+                        out[k + 1].as_mut_ptr() as *mut Chunk,
+                        tmp_hi.as_mut_ptr() as *mut Chunk,
                     );
                 }
                 
@@ -234,11 +247,11 @@ mod zkvm {
                 while tmp_hi[0] != 0 && idx < N2 {
                     unsafe {
                         sp1_lib::syscall_uint256_add_with_carry(
-                            out[idx].as_ptr() as *const [u32; 8],
-                            zero_carry.as_ptr() as *const [u32; 8],
-                            tmp_hi.as_ptr() as *const [u32; 8],
-                            out[idx].as_mut_ptr() as *mut [u32; 8],
-                            tmp_hi.as_mut_ptr() as *mut [u32; 8],
+                            out[idx].as_ptr() as *const Chunk,
+                            zero_carry.as_ptr() as *const Chunk,
+                            tmp_hi.as_ptr() as *const Chunk,
+                            out[idx].as_mut_ptr() as *mut Chunk,
+                            tmp_hi.as_mut_ptr() as *mut Chunk,
                         );
                     }
                     idx += 1;
@@ -251,18 +264,18 @@ mod zkvm {
 
     /// Generic addition of two chunk arrays with different sizes
     /// Adds smaller array to the lower part of larger array, handling carries
-    fn add_generic_chunks(larger: &mut [[u32; 8]], smaller: &[[u32; 8]]) {
-        let mut carry = [0u32; 8];
-        let zero_carry = [0u32; 8];
+    fn add_generic_chunks(larger: &mut [Chunk], smaller: &[Chunk]) {
+        let mut carry = chunk_zero();
+        let zero_carry = chunk_zero();
         
         for i in 0..smaller.len() {
             unsafe {
                 sp1_lib::syscall_uint256_add_with_carry(
-                    larger[i].as_ptr() as *const [u32; 8],
-                    smaller[i].as_ptr() as *const [u32; 8],
-                    carry.as_ptr() as *const [u32; 8],
-                    larger[i].as_mut_ptr() as *mut [u32; 8],
-                    carry.as_mut_ptr() as *mut [u32; 8],
+                    larger[i].as_ptr() as *const Chunk,
+                    smaller[i].as_ptr() as *const Chunk,
+                    carry.as_ptr() as *const Chunk,
+                    larger[i].as_mut_ptr() as *mut Chunk,
+                    carry.as_mut_ptr() as *mut Chunk,
                 );
             }
         }
@@ -271,11 +284,11 @@ mod zkvm {
         while idx < larger.len() && carry[0] != 0 {
             unsafe {
                 sp1_lib::syscall_uint256_add_with_carry(
-                    larger[idx].as_ptr() as *const [u32; 8],
-                    zero_carry.as_ptr() as *const [u32; 8],
-                    carry.as_ptr() as *const [u32; 8],
-                    larger[idx].as_mut_ptr() as *mut [u32; 8],
-                    carry.as_mut_ptr() as *mut [u32; 8],
+                    larger[idx].as_ptr() as *const Chunk,
+                    zero_carry.as_ptr() as *const Chunk,
+                    carry.as_ptr() as *const Chunk,
+                    larger[idx].as_mut_ptr() as *mut Chunk,
+                    carry.as_mut_ptr() as *mut Chunk,
                 );
             }
             idx += 1;
@@ -283,9 +296,9 @@ mod zkvm {
     }
 
     /// Assert that the result is less than the modulus
-    fn assert_less_than<const N: usize>(result_chunk: &[[u32; 8]; N], modulus_chunk: &[[u32; 8]; N]) {
+    fn assert_less_than<const N: usize>(result_chunk: &[Chunk; N], modulus_chunk: &[Chunk; N]) {
         for i in (0..N).rev() {
-            for j in (0..8).rev() {
+            for j in (0..CHUNK_SIZE).rev() {
                 if result_chunk[i][j] < modulus_chunk[i][j] {
                     return;
                 }
@@ -296,34 +309,31 @@ mod zkvm {
     }
     
     /// Generic helper to convert bytes to chunks
-    fn bytes_to_chunks<const N: usize>(bytes: &[u8]) -> [[u32; 8]; N] {
-        let mut chunks = [[0u32; 8]; N];
+    fn bytes_to_chunks<const N: usize>(bytes: &[u8]) -> [Chunk; N] {
+        let mut chunks = [chunk_zero(); N];
+        let word_size = std::mem::size_of::<ChunkWord>();
         assert!(bytes.len() == 32 * N, "incorrect length");
         for (i, chunk) in chunks.iter_mut().enumerate() {
             for (j, word) in chunk.iter_mut().enumerate() {
-                let byte_idx = (i * 8 + j) * 4;
-                *word = u32::from_le_bytes([
-                    bytes[byte_idx],
-                    bytes[byte_idx + 1], 
-                    bytes[byte_idx + 2],
-                    bytes[byte_idx + 3],
-                ]);
+                let byte_idx = (i * CHUNK_SIZE + j) * word_size;
+                let word_bytes = &bytes[byte_idx..byte_idx + word_size];
+                *word = ChunkWord::from_le_bytes(word_bytes.try_into().unwrap());
             }
         }
         chunks
     }
     
     /// Generic helper to convert chunks to bytes
-    fn chunks_to_bytes<const N: usize>(chunks: &[[u32; 8]; N]) -> Vec<u8> {
+    fn chunks_to_bytes<const N: usize>(chunks: &[Chunk; N]) -> Vec<u8> {
         chunks.iter()
             .flat_map(|chunk| chunk.iter().flat_map(|&word| word.to_le_bytes()))
             .collect()
     }
     
     /// Check if chunk array is zero
-    fn chunks_is_zero<const N: usize>(chunks: &[[u32; 8]; N]) -> bool {
+    fn chunks_is_zero<const N: usize>(chunks: &[Chunk; N]) -> bool {
         for i in 0..N {
-            for j in 0..8 {
+            for j in 0..CHUNK_SIZE {
                 if chunks[i][j] != 0 {
                     return false;
                 }
@@ -333,14 +343,19 @@ mod zkvm {
     }
     
     /// Get chunk array representing one
-    fn chunks_one<const N: usize>() -> [[u32; 8]; N] {
-        let mut chunks = [[0u32; 8]; N];
+    fn chunks_one<const N: usize>() -> [Chunk; N] {
+        let mut chunks = [chunk_zero(); N];
         chunks[0][0] = 1;
         chunks
     }
+
+    /// Helper to create zero chunk
+    fn chunk_zero() -> Chunk {
+        [ChunkWord::default(); CHUNK_SIZE]
+    }
     
     /// Convert BigUint to chunks for arbitrary key sizes
-    pub(super) fn from_biguint_to_chunks<const N: usize>(value: &BigUint) -> [[u32; 8]; N] {
+    pub(super) fn from_biguint_to_chunks<const N: usize>(value: &BigUint) -> [Chunk; N] {
         let mut padded_bytes = vec![0u8; N * 32];
         let value_bytes = value.to_bytes_le();
         for (i, &byte) in value_bytes.iter().enumerate() {

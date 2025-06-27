@@ -937,7 +937,6 @@ checksum = "4dccd0940a2dcdf68d092b8cbab7dc0ad8fa938bf95787e1b916b0e3d0e8e970"
 [[package]]
 name = "sp1-lib"
 version = "5.0.0"
-source = "git+https://github.com/succinctlabs/sp1-wip.git?branch=multilinear_v6#f57c32f25dcf439996cd6cd80aad7865b32ddc44"
 dependencies = [
  "bincode",
  "elliptic-curve",
@@ -948,7 +947,6 @@ dependencies = [
 [[package]]
 name = "sp1-primitives"
 version = "5.0.0"
-source = "git+https://github.com/succinctlabs/sp1-wip.git?branch=multilinear_v6#f57c32f25dcf439996cd6cd80aad7865b32ddc44"
 dependencies = [
  "bincode",
  "blake3",
