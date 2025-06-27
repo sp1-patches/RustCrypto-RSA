@@ -56,9 +56,12 @@ serde = { version = "1.0.184", optional = true, default-features = false, featur
     "derive",
 ] }
 
-[target.'cfg(all(target_os = "zkvm", target_vendor = "succinct"))'.dependencies]
+# [target.'cfg(all(target_os = "zkvm", target_pointer_width = "32", target_vendor = "succinct"))'.dependencies]
 # sp1-lib = { git = "https://github.com/succinctlabs/sp1-wip.git", branch = "multilinear_v6" }
-sp1-lib = { path = "../../sp1-wip/crates/zkvm/lib" }
+
+[target.'cfg(all(target_os = "zkvm", target_pointer_width = "64", target_vendor = "succinct"))'.dependencies]
+sp1-lib = { git = "https://github.com/succinctlabs/sp1-wip.git", branch = "min/merge-v6-to-rv64" }
+# sp1-lib = { path = "../../sp1-wip/crates/zkvm/lib" }
 
 [dev-dependencies]
 base64ct = { version = "1", features = ["alloc"] }
