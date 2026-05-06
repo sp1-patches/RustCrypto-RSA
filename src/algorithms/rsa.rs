@@ -86,13 +86,6 @@ pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
 mod zkvm {
     use super::*;
 
-    /// On invalid prover hints, halt the zkVM with exit code 3 instead of panicking.
-    /// This prevents a malicious prover from forging a regular `panic` (exit code 1).
-    #[inline(never)]
-    pub(super) fn halt_invalid_hint() -> ! {
-        unsafe { sp1_lib::syscall_halt(3) }
-    }
-
     // Macro to generate mul_mod functions for different bit sizes
     macro_rules! impl_mul_mod {
         ($name:ident, $chunks:expr, $bytes:expr, $fd_type:expr) => {
@@ -119,11 +112,11 @@ mod zkvm {
 
                 let result_bytes: [u8; $bytes] = match sp1_lib::io::read_vec().try_into() {
                     Ok(b) => b,
-                    Err(_) => halt_invalid_hint(),
+                    Err(_) => sp1_lib::halt_invalid_hint(),
                 };
                 let quotient_bytes: [u8; $bytes] = match sp1_lib::io::read_vec().try_into() {
                     Ok(b) => b,
-                    Err(_) => halt_invalid_hint(),
+                    Err(_) => sp1_lib::halt_invalid_hint(),
                 };
 
                 // Convert back to chunks
@@ -143,7 +136,7 @@ mod zkvm {
                 for i in 0..($chunks * 2) {
                     for j in 0..CHUNK_SIZE {
                         if prod_chunks[i][j] != verification_prod[i][j] {
-                            halt_invalid_hint();
+                            sp1_lib::halt_invalid_hint();
                         }
                     }
                 }
@@ -319,11 +312,11 @@ mod zkvm {
                     return;
                 }
                 if result_chunk[i][j] != modulus_chunk[i][j] {
-                    halt_invalid_hint();
+                    sp1_lib::halt_invalid_hint();
                 }
             }
         }
-        halt_invalid_hint();
+        sp1_lib::halt_invalid_hint();
     }
     
     /// Generic helper to convert bytes to chunks
