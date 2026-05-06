@@ -86,6 +86,13 @@ pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
 mod zkvm {
     use super::*;
 
+    /// On invalid prover hints, halt the zkVM with exit code 3 instead of panicking.
+    /// This prevents a malicious prover from forging a regular `panic` (exit code 1).
+    #[inline(never)]
+    pub(super) fn halt_invalid_hint() -> ! {
+        unsafe { sp1_lib::syscall_halt(3) }
+    }
+
     // Macro to generate mul_mod functions for different bit sizes
     macro_rules! impl_mul_mod {
         ($name:ident, $chunks:expr, $bytes:expr, $fd_type:expr) => {
@@ -110,8 +117,14 @@ mod zkvm {
                     &prod_bytes.into_iter().chain(modulus_bytes.into_iter()).collect::<Vec<_>>(),
                 );
 
-                let result_bytes: [u8; $bytes] = sp1_lib::io::read_vec().try_into().unwrap();
-                let quotient_bytes: [u8; $bytes] = sp1_lib::io::read_vec().try_into().unwrap();
+                let result_bytes: [u8; $bytes] = match sp1_lib::io::read_vec().try_into() {
+                    Ok(b) => b,
+                    Err(_) => halt_invalid_hint(),
+                };
+                let quotient_bytes: [u8; $bytes] = match sp1_lib::io::read_vec().try_into() {
+                    Ok(b) => b,
+                    Err(_) => halt_invalid_hint(),
+                };
 
                 // Convert back to chunks
                 let result_chunks: [Chunk; $chunks] = unsafe {
@@ -129,7 +142,9 @@ mod zkvm {
                 
                 for i in 0..($chunks * 2) {
                     for j in 0..CHUNK_SIZE {
-                        assert_eq!(prod_chunks[i][j], verification_prod[i][j], "equality check failed");
+                        if prod_chunks[i][j] != verification_prod[i][j] {
+                            halt_invalid_hint();
+                        }
                     }
                 }
 
@@ -295,17 +310,20 @@ mod zkvm {
         }
     }
 
-    /// Assert that the result is less than the modulus
+    /// Verify that the hinted result is less than the modulus.
+    /// Halts the zkVM with exit code 3 on failure (invalid hint).
     fn assert_less_than<const N: usize>(result_chunk: &[Chunk; N], modulus_chunk: &[Chunk; N]) {
         for i in (0..N).rev() {
             for j in (0..CHUNK_SIZE).rev() {
                 if result_chunk[i][j] < modulus_chunk[i][j] {
                     return;
                 }
-                assert!(result_chunk[i][j] == modulus_chunk[i][j], "result < modulus check failed");
+                if result_chunk[i][j] != modulus_chunk[i][j] {
+                    halt_invalid_hint();
+                }
             }
         }
-        assert!(false, "result < modulus check failed");
+        halt_invalid_hint();
     }
     
     /// Generic helper to convert bytes to chunks
