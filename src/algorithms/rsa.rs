@@ -112,11 +112,17 @@ mod zkvm {
 
                 let result_bytes: [u8; $bytes] = match sp1_lib::io::read_vec().try_into() {
                     Ok(b) => b,
-                    Err(_) => sp1_lib::halt_invalid_hint(),
+                    Err(_) => sp1_lib::invalid_hint!(
+                        "RSA modmul: result hint is not {} bytes",
+                        $bytes
+                    ),
                 };
                 let quotient_bytes: [u8; $bytes] = match sp1_lib::io::read_vec().try_into() {
                     Ok(b) => b,
-                    Err(_) => sp1_lib::halt_invalid_hint(),
+                    Err(_) => sp1_lib::invalid_hint!(
+                        "RSA modmul: quotient hint is not {} bytes",
+                        $bytes
+                    ),
                 };
 
                 // Convert back to chunks
@@ -136,7 +142,9 @@ mod zkvm {
                 for i in 0..($chunks * 2) {
                     for j in 0..CHUNK_SIZE {
                         if prod_chunks[i][j] != verification_prod[i][j] {
-                            sp1_lib::halt_invalid_hint();
+                            sp1_lib::invalid_hint!(
+                                "RSA modmul: prod != quotient * modulus + result"
+                            );
                         }
                     }
                 }
@@ -312,11 +320,11 @@ mod zkvm {
                     return;
                 }
                 if result_chunk[i][j] != modulus_chunk[i][j] {
-                    sp1_lib::halt_invalid_hint();
+                    sp1_lib::invalid_hint!("RSA modmul: result >= modulus");
                 }
             }
         }
-        sp1_lib::halt_invalid_hint();
+        sp1_lib::invalid_hint!("RSA modmul: result == modulus");
     }
     
     /// Generic helper to convert bytes to chunks
