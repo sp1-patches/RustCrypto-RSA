@@ -98,10 +98,10 @@ mod zkvm {
                 
                 // Convert to bytes for SP1 I/O using direct transmute
                 let prod_bytes: [u8; $bytes * 2] = unsafe {
-                    std::mem::transmute::<[Chunk; $chunks * 2], [u8; $bytes * 2]>(prod_chunks)
+                    core::mem::transmute::<[Chunk; $chunks * 2], [u8; $bytes * 2]>(prod_chunks)
                 };
                 let modulus_bytes: [u8; $bytes] = unsafe {
-                    std::mem::transmute::<[Chunk; $chunks], [u8; $bytes]>(*modulus_chunks)
+                    core::mem::transmute::<[Chunk; $chunks], [u8; $bytes]>(*modulus_chunks)
                 };
                 
                 // Call the hook to perform the modmul operation in the executor
@@ -127,10 +127,10 @@ mod zkvm {
 
                 // Convert back to chunks
                 let result_chunks: [Chunk; $chunks] = unsafe {
-                    std::mem::transmute::<[u8; $bytes], [Chunk; $chunks]>(result_bytes)
+                    core::mem::transmute::<[u8; $bytes], [Chunk; $chunks]>(result_bytes)
                 };
                 let quotient_chunks: [Chunk; $chunks] = unsafe {
-                    std::mem::transmute::<[u8; $bytes], [Chunk; $chunks]>(quotient_bytes)
+                    core::mem::transmute::<[u8; $bytes], [Chunk; $chunks]>(quotient_bytes)
                 };
                 
                 // Verify: prod == quotient * modulus + result and 0 <= result < modulus.
@@ -330,7 +330,7 @@ mod zkvm {
     /// Generic helper to convert bytes to chunks
     fn bytes_to_chunks<const N: usize>(bytes: &[u8]) -> [Chunk; N] {
         let mut chunks = [chunk_zero(); N];
-        let word_size = std::mem::size_of::<ChunkWord>();
+        let word_size = core::mem::size_of::<ChunkWord>();
         assert!(bytes.len() == 32 * N, "incorrect length");
         for (i, chunk) in chunks.iter_mut().enumerate() {
             for (j, word) in chunk.iter_mut().enumerate() {
