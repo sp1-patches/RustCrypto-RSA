@@ -9,6 +9,8 @@
 
 A portable RSA implementation in pure Rust.
 
+Do not use `RsaPrivateKey` in SP1 zkVM programs. If someone else generates the proof, they can see the private key used during execution. Use this patch for public key operations such as signature verification.
+
 ## Example
 
 ```rust

@@ -39,6 +39,17 @@ type Chunk = [ChunkWord; CHUNK_SIZE];
 ///
 /// Use this function with great care! Raw RSA should never be used without an appropriate padding
 /// or signature scheme. See the [module-level documentation][crate::hazmat] for more information.
+///
+/// # SP1 zkVM input limits
+///
+/// On the Succinct zkVM, keys whose modulus occupies 256, 384, or 512 bytes
+/// select acceleration with 2048-, 3072-, or 4096-bit input buffers respectively.
+/// Both `m` and the public exponent must fit the selected buffer. Larger values
+/// panic during conversion. Values are not truncated. This limits the input
+/// size but does not require `m < n`. Values at or above `n` that fit are reduced
+/// by modular exponentiation. Other key sizes use upstream `modpow`.
+/// Callers of this raw API must check these widths before calling on untrusted
+/// inputs. Native builds retain upstream `BigUint::modpow` behavior.
 #[inline]
 pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
     #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
@@ -78,10 +89,9 @@ pub fn rsa_encrypt<K: PublicKeyParts>(key: &K, m: &BigUint) -> Result<BigUint> {
 
 /// # ☢️️ WARNING: HAZARDOUS API ☢️
 ///
-/// All inputs are ASSUMED to be on the range of [0, 2^4096).]
-///
-/// Attempting to use this function with values outside of this range will result in truncation,
-/// and may have unintended side effects!
+/// Inputs must fit the selected 2048-, 3072-, or 4096-bit buffer.
+/// Conversion panics on oversized inputs. It never truncates them.
+/// See [`rsa_encrypt`] for the public input limits.
 #[cfg(all(target_os = "zkvm", target_vendor = "succinct"))]
 mod zkvm {
     use super::*;
